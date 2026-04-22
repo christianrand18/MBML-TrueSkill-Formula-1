@@ -1,0 +1,13 @@
+[project]
+name = "mbml-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.4.4",
+    "pandas>=3.0.2",
+    "pyro-ppl>=1.9.1",
+    "scikit-learn>=1.8.0",
+    "torch>=2.11.0",
+]
