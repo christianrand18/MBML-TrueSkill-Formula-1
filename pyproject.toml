@@ -10,4 +10,5 @@ dependencies = [
     "pyro-ppl>=1.9.1",
     "scikit-learn>=1.8.0",
     "torch>=2.11.0",
+    "trueskill>=0.4.5",
 ]
