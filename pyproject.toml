@@ -1,7 +1,7 @@
 [project]
 name = "mbml-project"
 version = "0.1.0"
-description = "Add your description here"
+description = "Bayesian probabilistic modelling of F1 driver and constructor skill (TrueSkill + Pyro)"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
