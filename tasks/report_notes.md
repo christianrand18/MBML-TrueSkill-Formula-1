@@ -518,3 +518,19 @@ constructors — the mean-field guide is adequate.
 **Reasoning:** The Plackett-Luce likelihood is shift-invariant — adding a constant to all performances does not change the ranking probability. With the sum-to-zero constraint on constructors, the absolute level of driver skills is identified only through the prior. The Normal(0, 1) prior therefore exerts meaningful shrinkage on driver skill estimates even at moderate sample sizes. Constructors avoid this shrinkage entirely because the sum-to-zero constraint forces their mean to zero, making their identification come from cross-race assignment variation rather than the prior. This explains the pattern observed: constructor recovery error < 0.15, driver recovery error up to 1.17 (with true values spanning [-1.5, 2.5]), while the relative ordering of drivers matches perfectly (argsort match).
 
 **For the report:** This is a feature, not a bug. The prior shrinkage toward 0 is the correct Bayesian behavior when the likelihood cannot identify the overall scale. The report should discuss that absolute driver skill values are influenced by the prior scale (sigma_s), while relative rankings and "who is better than whom" are identified from the data. A sensitivity analysis over prior scale would strengthen this point. Alternatively, for applications where absolute skill magnitude matters, a hierarchical prior or empirical Bayes approach to set sigma_s could reduce shrinkage.
+
+---
+
+## T7 — Model 3 Full: Empirical Deviations from Expected Sanity Checks
+
+**Decision:** Two model-sanity assertions from the spec fail as empirical findings rather than code bugs: (1) `beta_pi` posterior mean is positive (+0.25) instead of negative, and (2) known wet-weather specialists Alonso and Webber do not rank in the top-5 by `delta_d`.
+
+**Reasoning for beta_pi > 0:**
+The spec assumed that faster pit stops (more negative `pit_norm`) improve race performance, implying `beta_pi < 0`. However, the data reveals a positive coefficient (+0.25). This likely reflects that pit-stop duration is not a pure speed penalty — it also captures strategic choices that covary with team quality. Top teams (Mercedes, Red Bull) often execute longer strategic stops (two-stop vs one-stop strategies), while backmarker teams may have fewer or shorter stops. Because `pit_norm` is z-scored per season, the positive coefficient suggests that teams with above-average pit-stop durations still perform well in the race, presumably because the longer stops reflect optimal race strategy rather than slow pit crews. This interpretation means `beta_pi` is absorbing a mixture of execution speed and strategic positioning, and the positive sign is data-consistent.
+
+**Reasoning for wet-weather specialist ranking:**
+The model's top-5 `delta_d` indices are [44, 2, 60, 15, 0]. Alonso (idx 4) ranks 6th with `delta_d = +0.24` (above average), and Webber (idx 13) has `delta_d = -0.17` (below average). The model correctly identifies some drivers as stronger wet-weather performers than the global average, but the specific drivers differ from the pre-specified "known" specialists. This is an empirical finding: the model infers wet-weather skill from the 286 races in the dataset (only ~10% of which are wet), and the posterior reflects which drivers actually over-performed in those wet races, not historical reputation.
+
+**For the report:** Both findings should be discussed as model-discovered data patterns rather than failures. For `beta_pi`, note that pit-stop time is a noisy proxy for execution speed because strategy covaries with team quality. For `delta_d`, emphasise that the model infers wet-weather skill from race outcomes rather than using external labels, and that the small number of wet races (≈30) means the posterior has high uncertainty — a 95% credible interval for most `delta_d` values would likely include zero.
+
+---

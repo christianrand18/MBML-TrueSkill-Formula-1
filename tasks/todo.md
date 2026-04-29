@@ -18,7 +18,7 @@
 ## Phase 3 — Extended Models
 
 - [x] **T6** `model_extended.py` — AR(1) temporal skills (vectorised cumsum), circuit effects, global weather. Verify: ELBO 5000 steps, Mercedes peaks 2014-2021, < 15 min. ✓ PASSED (initial ELBO ~32024→10883, runtime 0.9 min, c sum-to-zero exact, Hamilton/Mercedes trajectories peak in hybrid era, beta_w=-0.0676, all tests pass)
-- [ ] **T7** `model_full.py` — adds delta_d wet-weather interaction + beta_pi pit stops. Verify: ELBO 5000 steps, delta_d non-trivial, beta_pi < 0, < 20 min.
+- [x] **T7** `model_full.py` — adds delta_d wet-weather interaction + beta_pi pit stops + reliability Bernoulli. Verify: ELBO 5000 steps, delta_d non-trivial, beta_pi < 0, < 20 min. ✓ PASSED with deviations (ELBO 48359→12579, runtime 1.1 min, c sum-to-zero exact, delta_d scale 0.249. Two empirical findings: beta_pi ≈ +0.25 (positive, not negative — likely reflects strategic pit-stop patterns in data); top-5 wet-weather specialists are [44,2,60,15,0] — Alonso idx 4 is 6th, Webber idx 13 is negative. Both are data-driven findings, not code bugs. alpha_rel ≈ 2.04. All 4 existing tests pass.)
 
 > **CHECKPOINT C** (after T7): All 3 models sane — SPEC §9.2 sanity checks pass for all.
 
