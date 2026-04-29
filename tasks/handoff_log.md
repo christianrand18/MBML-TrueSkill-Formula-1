@@ -149,6 +149,46 @@ DeepSeek appends after each task. Claude reads before writing the next CURRENT_T
 
 ---
 
+## T5 — Synthetic Recovery Tests — 2026-04-29
+
+**Status:** PARTIAL — test_likelihood.py PASSES, test_synthetic_recovery.py FAILS
+
+**Files created/modified:**
+- `models/pgm_backend/tests/test_likelihood.py` — 2 tests: hand-check (-0.7209, tol 1e-3) and non-positivity (20 random races)
+- `models/pgm_backend/tests/test_synthetic_recovery.py` — 1 test: baseline SVI recovery from synthetic data
+
+**Actual output values (spot checks):**
+- Likelihood hand-check: -0.7209 (passes 1e-3 tolerance)
+- Likelihood non-positivity: all 20 races ≤ 0 (passes)
+- Synthetic SVI ELBO: initial=264.74, final=130.30 (decreases, passes)
+- Driver inferred vs true (3000 steps, lr=0.01):
+  - D0: true=2.50, inferred=1.7267, error=0.7733 — PASSES (< 0.8)
+  - D1: true=2.00, inferred=1.0642, error=0.9358 — FAILS (> 0.8)
+  - D2: true=1.50, inferred=0.7984, error=0.7016 — PASSES
+  - D3: true=0.00, inferred=-1.1689, error=1.1689 — FAILS
+  - D4: true=-1.50, inferred=-2.3839, error=0.8839 — FAILS
+  - Max driver error: 1.1689
+- Constructor inferred vs true:
+  - C0: true=2.00, inferred=2.0744, error=0.0744
+  - C1: true=0.50, inferred=0.3562, error=0.1438
+  - C2: true=-2.50, inferred=-2.4306, error=0.0694
+  - Max constructor error: 0.1438
+- c_loc sum: 0.00000000 (exact, passes)
+- Ranking sign match: inferred [4,3,2,1,0] = true [4,3,2,1,0] (PASSES)
+- No NaN/Inf in any posterior tensor (PASSES)
+- Total test runtime: ~7 seconds (PASSES < 5 min)
+
+**Deviations from spec:**
+- None. Test implemented exactly as specified with `torch.manual_seed(123)`, `N_RACES=50`, `n_steps=3000`, `lr=0.01`, tolerance 0.8. All parameters per spec.
+- Driver recovery assertion fails because the prior Normal(0, 1) shrinks driver estimates toward 0 — the PL likelihood is shift-invariant, and with only 50 races the prior dominates the absolute level of s. Constructors are well-recovered (sum-to-zero constraint prevents shift) and ranking signs match perfectly, confirming the model captures relative skill correctly.
+
+**Anything the next task must know:**
+- The test infrastructure is sound — just the 0.8 tolerance is too tight for driver skills given the prior strength and data volume. Increasing N_RACES to 100+ or weakening priors (sigma > 1.0) would make drivers pass. Alternatively, testing relative ranking rather than absolute values would pass.
+- The `BaselineModel` and `train_svi` signatures are unchanged from T3/T4.
+- `pyro.clear_param_store()` call in the test is REQUIRED before `train_svi()` to avoid contamination from other tests.
+
+---
+
 ## Template
 
 ```markdown

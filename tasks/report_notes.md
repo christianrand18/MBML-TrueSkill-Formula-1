@@ -508,3 +508,13 @@ performance estimates matter, a richer guide (e.g. multivariate Normal over s an
 c_raw jointly, or a normalising flow) would reduce the discrepancy. The cost is
 guide complexity, and for the purpose of this project — identifying top drivers and
 constructors — the mean-field guide is adequate.
+
+---
+
+## T5 — Synthetic Recovery: Prior Shrinkage Due to PL Shift-Invariance
+
+**Decision:** The synthetic recovery test reveals that driver skill absolute values are shrunk toward 0 by the Normal(0, 1) prior even with 250 observations (50 races), while relative driver rankings and constructor effects are recovered well.
+
+**Reasoning:** The Plackett-Luce likelihood is shift-invariant — adding a constant to all performances does not change the ranking probability. With the sum-to-zero constraint on constructors, the absolute level of driver skills is identified only through the prior. The Normal(0, 1) prior therefore exerts meaningful shrinkage on driver skill estimates even at moderate sample sizes. Constructors avoid this shrinkage entirely because the sum-to-zero constraint forces their mean to zero, making their identification come from cross-race assignment variation rather than the prior. This explains the pattern observed: constructor recovery error < 0.15, driver recovery error up to 1.17 (with true values spanning [-1.5, 2.5]), while the relative ordering of drivers matches perfectly (argsort match).
+
+**For the report:** This is a feature, not a bug. The prior shrinkage toward 0 is the correct Bayesian behavior when the likelihood cannot identify the overall scale. The report should discuss that absolute driver skill values are influenced by the prior scale (sigma_s), while relative rankings and "who is better than whom" are identified from the data. A sensitivity analysis over prior scale would strengthen this point. Alternatively, for applications where absolute skill magnitude matters, a hierarchical prior or empirical Bayes approach to set sigma_s could reduce shrinkage.
