@@ -254,6 +254,47 @@ DeepSeek appends after each task. Claude reads before writing the next CURRENT_T
 
 ---
 
+## T8 — Posterior Extraction + Orchestrator + Plots — 2026-04-29
+
+**Status:** PASSED
+
+**Files created:**
+- `models/pgm_backend/posterior.py` — unified `extract_posterior()` for all three models
+- `models/pgm_backend/run_pgm.py` — end-to-end orchestrator with 10 plot functions
+
+**Actual output values (spot checks):**
+- Full pipeline runtime: 780s (~13 min on M1 Pro)
+- `baseline_posterior.csv`: 94 rows (77 drivers + 17 constructors)
+- `extended_posterior.csv`: 1352 rows (1078 driver·season + 238 constructor·season + 35 circuit + 1 global)
+- `full_posterior.csv`: 1431 rows (additional 77 delta_d + 1 beta_pi + 1 alpha_rel)
+- `nuts_vs_svi_comparison.csv`: 94 rows (regenerated)
+- All 10 plots written to `outputs/pgm_model/plots/`
+- Model 1 top driver: Piastri (#857) s=+1.13; Hamilton (#1) s=+0.68 (rank 6)
+- Model 1 top constructor: Mercedes (#131) c=+1.49, Red Bull (#9) c=+1.18, Ferrari (#6) c=+0.74
+- Hamilton temporal peak: season 9 (2020) s=+1.19
+- Mercedes temporal peak: season 8 (2019)
+- beta_pi posterior mean: +0.26 (positive, confirmed)
+- alpha_rel posterior mean: 2.02
+- beta_w posterior mean: -0.08 (small, similar to T6/T7)
+- delta_d range: [-0.80, +0.67], 45/77 positive
+- NUTS driver discrepancy mean: 0.47, constructor discrepancy mean: 1.53
+- All 4 existing tests (test_likelihood × 2, test_prior_predictive, test_synthetic_recovery): PASS
+
+**Deviations from spec:**
+- None. Implemented exactly as specified.
+- `_plot_beta_pi()` required snapshotting `beta_pi_scale` from param store after Model 3 training (before `_plot_synthetic_recovery()` cleared it via internal `pyro.clear_param_store()`). Function signature changed to accept `(beta_pi_loc, beta_pi_scale)` as arguments rather than reading from param store directly.
+
+**Anything the next task must know:**
+- `extract_posterior(model_name, dataset)` reads from the active Pyro param store. The correct model's params must be present when called. In `run_pgm.py`, it is called immediately after each model's training (before any `pyro.clear_param_store()`).
+- For the static model, constructor scale `c_scale` (K-1,) is expanded to (K,) by appending the mean of the K-1 raw scales for the K-th entry.
+- For temporal models, driver scales use `s0_scale` for season 0 and `s_innov_scale[t-1]` for season t. Constructor raw scales are similarly stacked then expanded to K via mean-of-raw for the K-th entry.
+- Season column in posterior CSVs is mixed type (int 0-13 for temporal rows, string "all" for static rows). Pandas will convert this to object dtype. Plots use `int(season)` for indexing.
+- `_plot_synthetic_recovery()` and `_plot_prior_predictive()` are self-contained and do not depend on any trained model data.
+- SVI vs NUTS scatter falls back to reading `nuts_vs_svi_comparison.csv` if NUTS fails.
+- Driver labels use a hardcoded `LABEL_MAP` dictionary (driverId → name) since the enriched CSV does not contain driver forename/surname columns.
+
+---
+
 ## Template
 
 ```markdown
