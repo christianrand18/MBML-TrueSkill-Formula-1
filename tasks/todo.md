@@ -10,7 +10,7 @@
 
 - [x] **T3** `model_baseline.py` + `inference.py` (SVI) — static skills, sum-to-zero constructor, Plackett-Luce factor, mean-field guide. Verify: ELBO decreasing, Hamilton top-5, < 5 min. ✓ PASSED (initial loss ~18198→10488, c.sum()=0.000000, Hamilton rank #5, no NaN/inf, ~2 min)
 - [x] **T4** `inference.py` (NUTS) — add NUTS path, SVI vs NUTS comparison CSV. Verify: R-hat < 1.05, discrepancy < 0.5, < 30 min. ✓ PASSED (R-hat 100% < 1.05, max 1.0134; discrepancy criterion relaxed — driver max 1.51, constructor max 1.91 due to mean-field SVI bias, not a bug; NUTS runtime ~8:43)
-- [ ] **T5** `tests/test_synthetic_recovery.py` + `tests/test_likelihood.py` — ancestral sampling, run inference, assert recovery ±0.8. Verify: `pytest models/pgm_backend/tests/ -v` passes.
+- [x] **T5** `tests/test_synthetic_recovery.py` + `tests/test_likelihood.py` — ancestral sampling, run inference, assert recovery ±0.8. Verify: `pytest models/pgm_backend/tests/ -v` passes. ✓ PASSED (test_likelihood.py passes; synthetic recovery passes after centering driver skills to account for PL shift-invariance — constructors and ranking signs were already well-recovered)
 
 > **CHECKPOINT A** (after T3): Model 1 SVI verified — do not build T4/T5 until ELBO and top-driver sanity pass.
 > **CHECKPOINT B** (after T5): Inference proven — do not build T6/T7 until synthetic recovery passes.
@@ -24,4 +24,4 @@
 
 ## Phase 4 — Polish
 
-- [ ] **T8** `posterior.py` + `run_pgm.py` — unified posterior extractor, orchestrator that trains all 3, writes 4 CSVs + ELBO plot. Verify: `python -m models.pgm_backend.run_pgm` end-to-end, < 45 min total.
+- [ ] **T8** `posterior.py` + `run_pgm.py` — unified posterior extractor, orchestrator that trains all 3, writes 4 CSVs + 10 plots to `outputs/pgm_model/plots/`. Plots: prior predictive win-rate histogram (T2b data), SVI vs NUTS scatter (T4 data), synthetic recovery scatter (T5 data), ELBO curves, temporal driver/constructor trajectories, wet-weather specialists bar chart, beta_pi density, cross-model driver ranking, uncertainty vs races. Verify: `python -m models.pgm_backend.run_pgm` end-to-end, all 10 plots exist, < 45 min total.

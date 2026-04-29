@@ -54,10 +54,15 @@ def test_baseline_recovery():
         f"ELBO did not decrease: {losses[0]:.2f} -> {losses[-1]:.2f}"
     )
 
+    # Driver skills are only identified up to an additive constant under the
+    # Plackett-Luce likelihood.  Centre both true and inferred values before
+    # comparing absolute recovery.
+    true_s_centred = true_s - true_s.mean()
+    inferred_s_centred = posterior["s_loc"] - posterior["s_loc"].mean()
     for d in range(5):
-        err = abs(posterior["s_loc"][d].item() - true_s[d].item())
+        err = abs(inferred_s_centred[d].item() - true_s_centred[d].item())
         assert err < 0.8, (
-            f"Driver {d}: true={true_s[d]:.2f}, inferred={posterior['s_loc'][d]:.2f}, error={err:.3f}"
+            f"Driver {d}: true={true_s[d]:.2f}, inferred={posterior['s_loc'][d]:.2f}, centred error={err:.3f}"
         )
 
     for k in range(3):

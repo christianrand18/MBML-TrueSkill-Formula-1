@@ -371,13 +371,46 @@ def extract_posterior(model_name: str, param_store, maps: dict) -> pd.DataFrame:
    and `nuts_vs_svi_comparison.csv`
 3. Train Model 2, write `extended_posterior.csv`
 4. Train Model 3, write `full_posterior.csv`
-5. Plot ELBO curves for all three SVI runs → `elbo_curves.png`
+5. Generate all plots (see below) → `outputs/pgm_model/plots/`
 6. Print top-10 driver and constructor table to stdout for all three models
+
+**Plots (`outputs/pgm_model/plots/`):**
+
+*From previously completed tasks — data already exists:*
+- `prior_predictive_win_rate.png` — histogram of prior-fastest-driver win rates across
+  100 draws (from Task 2b). Annotates the 20–80% acceptance band. Source: re-run the
+  prior predictive sampling; no new data needed.
+- `svi_vs_nuts_scatter.png` — scatter plot of SVI posterior mean vs NUTS posterior mean
+  per driver (x=y reference line, error bars = ±1 NUTS std). Source: `nuts_vs_svi_comparison.csv`
+  (Task 4).
+- `synthetic_recovery.png` — scatter plot of true parameter value vs posterior mean for
+  all 5 synthetic drivers and 3 constructors (x=y reference line, ±0.8 tolerance band).
+  Source: re-run `test_baseline_recovery()` capturing the posterior means (Task 5).
+
+*From Models 2 & 3 (generated after training):*
+- `elbo_curves.png` — ELBO training loss for all three SVI runs on one axes.
+- `temporal_driver_skills.png` — line plot of `s[t, d]` over seasons (2011–2024) for
+  Hamilton, Verstappen, Alonso, and 3–4 others. One line per driver, shaded ±1 std band.
+  Source: Model 2 posterior.
+- `temporal_constructor_performance.png` — same structure for Mercedes, Red Bull,
+  Ferrari, and 2–3 others. Source: Model 2 posterior.
+- `wet_weather_specialists.png` — horizontal bar chart of `delta_d` posterior mean ± std
+  for all drivers, sorted descending. Source: Model 3 posterior.
+- `beta_pi_posterior.png` — density/histogram of `beta_pi` posterior samples or
+  approximation (expected negative mean). Source: Model 3 posterior.
+- `cross_model_driver_ranking.png` — top-15 drivers by posterior mean `s_d` shown
+  side-by-side for Models 1, 2, 3 (grouped bar or dot plot). Illustrates how temporal
+  and covariate structure shifts perceived skill.
+- `uncertainty_vs_races.png` — scatter of posterior std vs number of races per driver
+  (Model 1). Validates that more race appearances → tighter posteriors (SPEC §9.2).
 
 **Acceptance criteria:**
 - `python -m models.pgm_backend.run_pgm` runs end-to-end without errors
 - All 4 output CSVs exist after run
+- All 10 plots exist under `outputs/pgm_model/plots/`
 - `elbo_curves.png` shows three monotonically decreasing curves
+- `svi_vs_nuts_scatter.png` points lie close to the x=y line (visual confirmation of Task 4 criterion)
+- `temporal_driver_skills.png` shows Hamilton with increasing skill 2014–2020
 - Runtime < 45 minutes total on CPU
 
 ---
