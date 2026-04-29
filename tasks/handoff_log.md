@@ -40,6 +40,31 @@ DeepSeek appends after each task. Claude reads before writing the next CURRENT_T
 
 ---
 
+## T2 — Plackett-Luce Likelihood — 2026-04-29
+
+**Status:** PASSED
+
+**Files created/modified:**
+- `models/pgm_backend/likelihood.py` — `plackett_luce_log_prob(performances, race_lengths)` scalar log-prob
+
+**Actual output values (spot checks):**
+- 3-driver hand check: -0.7209 (expected ≈ -0.7209, tolerance 1e-3)
+- Correct vs reversed ordering: -0.72 vs -3.72 (correct > reversed)
+- Joint two-race additivity: exact within 1e-5
+- Non-positivity: all 20 random races ≤ 0
+- Mixed race lengths [4,2]: finite scalar, no NaN
+
+**Deviations from spec:**
+- None
+
+**Anything the next task must know:**
+- Function signature: `plackett_luce_log_prob(performances: (N_total,), race_lengths: (R,) LongTensor) -> scalar Tensor`
+- Pure PyTorch, no Pyro dependency. No imports from data_preparation.py.
+- `performances` must be sorted in finishing order (winner first) within each race block — this is guaranteed by data_preparation.py.
+- Returns a 0-dim tensor, not a (1,) tensor.
+
+---
+
 ## Template
 
 ```markdown
