@@ -155,3 +155,34 @@ def compare_svi_nuts(svi_posterior, mcmc, dataset) -> pd.DataFrame:
     df.to_csv("outputs/pgm_model/nuts_vs_svi_comparison.csv", index=False)
 
     return df
+
+
+def extract_svi_posterior_full(model) -> dict[str, torch.Tensor]:
+    """Extract reconstructed temporal posterior means for Model 3."""
+    T, D = model.T, model.D
+    K = model.K
+
+    s0_loc = pyro.param("s0_loc").detach().clone()
+    s_innov_loc = pyro.param("s_innov_loc").detach().clone()
+    s_loc = torch.cat([s0_loc.unsqueeze(0), s0_loc.unsqueeze(0) + s_innov_loc.cumsum(0)], dim=0)
+
+    c0_raw_loc = pyro.param("c0_raw_loc").detach().clone()
+    c_innov_loc = pyro.param("c_innov_loc").detach().clone()
+    c_raw_loc = torch.cat([c0_raw_loc.unsqueeze(0), c0_raw_loc.unsqueeze(0) + c_innov_loc.cumsum(0)], dim=0)
+    c_loc = torch.cat([c_raw_loc, -c_raw_loc.sum(dim=1, keepdim=True)], dim=1)
+
+    e_circ_loc = pyro.param("e_circ_loc").detach().clone()
+    beta_w_loc = pyro.param("beta_w_loc").detach().clone()
+    delta_d_loc = pyro.param("delta_d_loc").detach().clone()
+    beta_pi_loc = pyro.param("beta_pi_loc").detach().clone()
+    alpha_rel_loc = pyro.param("alpha_rel_loc").detach().clone()
+
+    return {
+        "s_loc": s_loc,               # (T, D)
+        "c_loc": c_loc,               # (T, K)
+        "e_circ_loc": e_circ_loc,     # (C,)
+        "beta_w_loc": beta_w_loc,     # scalar
+        "delta_d_loc": delta_d_loc,   # (D,)
+        "beta_pi_loc": beta_pi_loc,   # scalar
+        "alpha_rel_loc": alpha_rel_loc,  # scalar
+    }

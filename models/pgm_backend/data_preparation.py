@@ -45,6 +45,7 @@ class F1RankingDataset:
 
     is_mech: torch.Tensor          # (N_all,) BoolTensor — True if mechanical DNF
     cons_idx_all: torch.Tensor     # (N_all,) LongTensor — constructor index for all rows
+    season_idx_all: torch.Tensor   # (N_all,) LongTensor — season index for all original rows
 
     n_drivers: int
     n_constructors: int
@@ -129,6 +130,10 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
         ranking["raceId"].map(race_lookup).values, dtype=torch.long
     )
 
+    season_idx_all_tensor = torch.tensor(
+        df["year"].map(season_lookup).values, dtype=torch.long
+    )
+
     # ---- 7. Pit normalisation: (x - mean) / (std + 1e-8) per season ----
     ranking["_pit_z"] = ranking.groupby("year")["total_pit_duration_ms"].transform(
         lambda x: (x - x.mean()) / (x.std() + 1e-8)
@@ -154,6 +159,7 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
         race_lengths=race_lengths_tensor,
         is_mech=is_mech_tensor,
         cons_idx_all=cons_idx_all_tensor,
+        season_idx_all=season_idx_all_tensor,
         n_drivers=len(unique_drivers),
         n_constructors=len(unique_constructors),
         n_seasons=len(unique_seasons),
@@ -191,5 +197,6 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
     assert ds.wet.dtype == torch.float32, "wet must be FloatTensor"
     assert ds.is_mech.dtype == torch.bool, "is_mech must be BoolTensor"
     assert ds.cons_idx_all.dtype == torch.long, "cons_idx_all must be LongTensor"
+    assert ds.season_idx_all.dtype == torch.long, "season_idx_all must be LongTensor"
 
     return ds
