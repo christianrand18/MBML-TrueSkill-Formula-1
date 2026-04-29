@@ -189,6 +189,37 @@ DeepSeek appends after each task. Claude reads before writing the next CURRENT_T
 
 ---
 
+## T6 — Model 2 Extended — AR(1) Temporal Skills, Circuit Effects, Weather — 2026-04-29
+
+**Status:** PASSED
+
+**Files created/modified:**
+- `models/pgm_backend/model_extended.py` — ExtendedModel class (AR(1) driver+constructor, circuit effects, weather coefficient)
+- `models/pgm_backend/inference.py` — generalised `train_svi()` with `step_kwargs` parameter; added `extract_svi_posterior_extended()`
+
+**Actual output values (spot checks):**
+- Initial ELBO: 40086.07
+- Final ELBO (step 4999): 10892.48
+- Runtime: 1.0 min (M1 Pro CPU)
+- c sum-to-zero max abs: 0.000000 (exact)
+- beta_w posterior mean: 0.0292
+- Hamilton trajectory (idx 0): [0.61, 0.71, 0.77, 0.99, 1.02, 0.97, 0.94, 0.97, 1.13, 1.27, 1.08, 0.90, 0.82, 0.76] — peaks in hybrid era 2014-2021 (seasons 3-10)
+- Mercedes trajectory (idx 8): [0.28, 0.43, 1.08, 1.67, 1.74, 2.01, 2.14, 2.05, 2.27, 2.05, 1.46, 1.30, 0.84, 0.93] — peaks in hybrid era (2019=2.27, 2020=2.05)
+- Prior tests unaffected: all 4 tests pass (test_likelihood.py, test_prior_predictive.py, test_synthetic_recovery.py)
+
+**Deviations from spec:**
+- None. Implemented exactly as specified in CURRENT_TASK.md.
+
+**Anything the next task must know:**
+- `train_svi()` is backward-compatible: with `step_kwargs=None` the existing Model 1 path works unchanged.
+- Pyro param store keys for Model 2: "s0_loc" (77,), "s0_scale" (77,), "s_innov_loc" (13,77), "s_innov_scale" (13,77), "c0_raw_loc" (16,), "c0_raw_scale" (16,), "c_innov_loc" (13,16), "c_innov_scale" (13,16), "e_circ_loc" (35,), "e_circ_scale" (35,), "beta_w_loc" scalar, "beta_w_scale" scalar.
+- `extract_svi_posterior_extended()` reconstructs `s_loc` (T,D) and `c_loc` (T,K) from innovations using cumsum, matching the model's forward computation.
+- ELBO curve shows slight noise after step 3000 — this is normal for SVI with high-dimensional parameters. The overall trend is clearly downward and the posterior is meaningful.
+- `beta_w` posterior mean is close to zero (0.0292) suggesting weather has weak marginal effect on PL ranking in this model.
+- Season indexing: season 0 = 2011, season 13 = 2024. Hybrid era = seasons 3–10.
+
+---
+
 ## Template
 
 ```markdown

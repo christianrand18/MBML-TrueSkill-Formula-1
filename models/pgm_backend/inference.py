@@ -13,17 +13,20 @@ from models.pgm_backend.model_baseline import BaselineModel
 logger = logging.getLogger(__name__)
 
 
-def train_svi(model, dataset, n_steps=3000, lr=0.01, log_every=100):
+def train_svi(model, dataset, n_steps=3000, lr=0.01, log_every=100, step_kwargs=None):
     optimizer = pyro.optim.Adam({"lr": lr})
     svi = SVI(model.model, model.guide, optimizer, loss=Trace_ELBO())
 
+    if step_kwargs is None:
+        step_kwargs = {
+            "driver_idx": dataset.driver_idx,
+            "cons_idx": dataset.cons_idx,
+            "race_lengths": dataset.race_lengths,
+        }
+
     losses = []
     for step in range(n_steps):
-        loss = svi.step(
-            driver_idx=dataset.driver_idx,
-            cons_idx=dataset.cons_idx,
-            race_lengths=dataset.race_lengths,
-        )
+        loss = svi.step(**step_kwargs)
         losses.append(loss)
         if step % log_every == 0 or step == n_steps - 1:
             print(f"Step {step:5d}  ELBO loss: {loss:.2f}")
@@ -44,6 +47,31 @@ def extract_svi_posterior(model) -> dict[str, torch.Tensor]:
         "s_scale": s_scale,
         "c_loc": c_loc,
         "c_scale": c_scale,
+    }
+
+
+def extract_svi_posterior_extended(model) -> dict[str, torch.Tensor]:
+    """Extract reconstructed temporal posterior means for Model 2."""
+    T, D = model.T, model.D
+    K = model.K
+
+    s0_loc = pyro.param("s0_loc").detach().clone()
+    s_innov_loc = pyro.param("s_innov_loc").detach().clone()
+    s_loc = torch.cat([s0_loc.unsqueeze(0), s0_loc.unsqueeze(0) + s_innov_loc.cumsum(0)], dim=0)
+
+    c0_raw_loc = pyro.param("c0_raw_loc").detach().clone()
+    c_innov_loc = pyro.param("c_innov_loc").detach().clone()
+    c_raw_loc = torch.cat([c0_raw_loc.unsqueeze(0), c0_raw_loc.unsqueeze(0) + c_innov_loc.cumsum(0)], dim=0)
+    c_loc = torch.cat([c_raw_loc, -c_raw_loc.sum(dim=1, keepdim=True)], dim=1)
+
+    e_circ_loc = pyro.param("e_circ_loc").detach().clone()
+    beta_w_loc = pyro.param("beta_w_loc").detach().clone()
+
+    return {
+        "s_loc": s_loc,          # (T, D)
+        "c_loc": c_loc,          # (T, K)
+        "e_circ_loc": e_circ_loc,
+        "beta_w_loc": beta_w_loc,
     }
 
 
