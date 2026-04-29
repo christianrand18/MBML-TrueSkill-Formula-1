@@ -65,6 +65,28 @@ DeepSeek appends after each task. Claude reads before writing the next CURRENT_T
 
 ---
 
+## T2b — Prior Predictive Check — 2026-04-29
+
+**Status:** PARTIAL — win rate assertion passes, gap assertion fails
+
+**Files created/modified:**
+- `models/pgm_backend/tests/__init__.py` — empty init for pytest discovery
+- `models/pgm_backend/tests/test_prior_predictive.py` — single test: `test_prior_predictive`
+
+**Actual output values (spot checks):**
+- Prior-fastest driver win rate: 0.39 (passes: 0.20 ≤ 0.39 ≤ 0.80)
+- Mean P1–P20 performance gap: 6.26 (fails: 6.26 > 5.0)
+
+**Deviations from spec:**
+- `c_raw.sum(keepdim=True)` required `dim=0` arg for PyTorch 2.11+: `c_raw.sum(dim=0, keepdim=True)`. Without `dim`, the `keepdim` keyword is not accepted by `.sum()`.
+- Gap assertion (≤ 5.0) fails with sigma_s=1.0, sigma_c=1.0. Actual gap is 6.26. The priors produce performance gaps ~25% wider than the expected upper bound.
+
+**Anything the next task must know:**
+- The win rate is solid (0.39) — priors are not too flat or too sharp for predicting winners.
+- The P1-P20 gap overshoot suggests sigmas may need reduction (plan.md recommends σ ∈ {0.5, 0.75} if gap > 5.0). This is a decision for Claude before T3.
+- pytest is installed in the venv (was missing from dependencies — added via `uv pip install pytest`).
+
+
 ## Template
 
 ```markdown

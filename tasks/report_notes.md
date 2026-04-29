@@ -457,3 +457,29 @@ double the actual value) overestimates the mechanical DNF prevalence in the F1 d
 8.7% of all entries, not 17%. This affects the calibrati on of Model 3's reliability
 term and should be reflected in any discussion of expected Bernoulli success probabilities.
 The reliability baseline `α_rel` will converge to a value reflecting this lower rate.
+
+---
+
+## 15. [T2b] — Prior Predictive Check: sigma_s=1.0, sigma_c=1.0 partially pass
+
+**Decision:** Prior predictive check (100 draws, seed=42, 20 drivers, 10 constructors)
+with sigma_s=1.0, sigma_c=1.0.
+
+**Results:**
+- Prior-fastest driver win rate: 0.39 (within [0.20, 0.80] ✓)
+- Mean P1–P20 performance gap: 6.26 (exceeds 5.0 upper bound ✗)
+
+**Reasoning:** The win rate confirms priors are appropriately weakly informative for
+predicting winners — the strongest driver wins ~39% of the time, comparable to Hamilton's
+historical win rate. However, the performance gap between the best and worst driver
+is wider than expected at 6.26 units (vs. the 5.0 upper bound). With sigma_s=1.0 and
+sigma_c=1.0, the theoretical gap for ±2σ drivers at ±2σ constructors is ~4 × 1.0 + 4 × 1.0 ≈ 8.0,
+and actual draws cluster around ~6.3. Reducing sigma_s, sigma_c, or both to ~0.75 would
+bring the expected gap within [1.0, 5.0].
+
+**For the report:** If sigmas are kept at 1.0, note that the priors are wide enough to
+accommodate large performance gaps (plausible for F1, where backmarkers can be >6s/lap
+slower). If sigmas are reduced to 0.75, note that this was calibrated via prior
+predictive checking to keep the P1–P20 gap within a physically reasonable F1 range.
+Either choice is defensible; the key is transparency about the prior predictive check
+results.

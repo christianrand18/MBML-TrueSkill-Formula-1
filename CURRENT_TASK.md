@@ -1,8 +1,8 @@
 # Current Task
 
 **Status:** READY FOR HANDOFF  
-**Task ID:** T2  
-**Task name:** Plackett-Luce Likelihood (`likelihood.py`)
+**Task ID:** T2b  
+**Task name:** Prior Predictive Check (`tests/test_prior_predictive.py`)
 
 ---
 
@@ -13,41 +13,28 @@ This file contains everything you need to implement the current task. Do not loo
 
 ---
 
-## Context from T1
+## Context from T1 and T2
 
-The dataset is built and verified. Actual values:
+### Actual dataset counts (from T1)
+- `n_drivers` = 77, `n_constructors` = 17
 
-| Field | Value |
-|---|---|
-| n_races | 286 |
-| n_drivers | 77 |
-| n_constructors | 17 (after remap) |
-| N_entries | 5457 (ranking rows — no mechanical DNFs) |
-| N_all | 5980 (all original rows) |
-| race_lengths range | [12, 24] |
+### Likelihood function (from T2)
+```python
+from models.pgm_backend.likelihood import plackett_luce_log_prob
+# signature: (performances: (N,), race_lengths: (R,) LongTensor) -> scalar
+```
 
-Key facts T2 must know:
-- `wet` is per-race shape `(286,)`. To get per-entry values: `wet[race_idx]`. **T2 does not use this — it is noted for T3.**
-- `race_lengths` is a LongTensor `(286,)` where each value is the count of ranking entries for that race. `race_lengths.sum() == 5457`.
-- `race_order` is 0-indexed within each race (0 = winner). The performances tensor passed to `plackett_luce_log_prob` must already be sorted so that position 0 in each race block is the winner. This is guaranteed by how `data_preparation.py` builds `race_order` (sort by `positionOrder` ascending within each race).
-
-**T2 is a pure function — it does not import `data_preparation.py`.** It only depends on PyTorch.
+T2b does **not** use these directly — it is a standalone prior predictive check.
 
 ---
 
 ## What to Build
 
-Create `models/pgm_backend/likelihood.py` with a single exported function:
+Create one file:
 
-```python
-def plackett_luce_log_prob(
-    performances: torch.Tensor,   # (N_total,) — in finishing order, winner first
-    race_lengths: torch.Tensor,   # (R,) LongTensor — entries per race
-) -> torch.Tensor:                # scalar
-```
+**`models/pgm_backend/tests/test_prior_predictive.py`**
 
-This function computes the Plackett-Luce log-probability of observing a set of race
-finishing orders given latent performance scores.
+A single pytest function that verifies the chosen priors (`sigma_s = 1.0`, `sigma_c = 1.0`) produce plausible F1 race outcomes before any inference is run.
 
 ---
 
@@ -55,7 +42,7 @@ finishing orders given latent performance scores.
 
 | File | Action |
 |---|---|
-| `models/pgm_backend/likelihood.py` | Create |
+| `models/pgm_backend/tests/test_prior_predictive.py` | Create |
 
 Do not touch any other file.
 
@@ -63,186 +50,190 @@ Do not touch any other file.
 
 ## Full Implementation Spec
 
-### What Plackett-Luce computes
+### Purpose
 
-For a single race with R drivers and performances `[p_0, p_1, ..., p_{R-1}]` in
-finishing order (index 0 = winner):
+Confirm that `sigma_s = 1.0` and `sigma_c = 1.0` are weakly informative — not so flat that outcomes are near-random, not so sharp that one driver wins almost every race.
 
-```
-log P = Σ_{i=0}^{R-1} [ p_i - log Σ_{j=i}^{R-1} exp(p_j) ]
-      = Σ_{i=0}^{R-1} [ p_i - logsumexp(p_i, ..., p_{R-1}) ]
-```
+### Setup
 
-The last term always contributes 0 (`p_{R-1} - logsumexp([p_{R-1}]) = 0`) and can
-be included or excluded — including it is fine.
-
-### Algorithm: padded matrix approach
-
-This function handles multiple races of different lengths in one vectorised pass.
-
-**Step 1 — Reshape into padded matrix:**
-
-Scatter the flat `(N_total,)` performances into a `(R, max_N)` matrix where
-`max_N = race_lengths.max()`. Positions beyond each race's length are filled with `-inf`.
+Use **D = 20 representative drivers** and **K = 10 representative constructors** with a 20-driver race. Run **N_DRAWS = 100** independent prior draws.
 
 ```python
-max_N = race_lengths.max().item()
-padded = torch.full((R, max_N), float('-inf'))
-# fill row r with performances[offset : offset + race_lengths[r]]
+import torch
+import pytest
+
+D = 20      # representative drivers
+K = 10      # representative constructors
+N_DRAWS = 100
+SIGMA_S = 1.0
+SIGMA_C = 1.0
 ```
 
-Use a cumulative-sum offset to locate each race's block in the flat tensor.
+### Algorithm
 
-**Step 2 — Compute per-position log-prob contributions:**
+For each of the 100 draws:
 
-For each column `i` in `[0, max_N)`:
+1. **Sample prior parameters:**
+   ```python
+   s = torch.randn(D) * SIGMA_S              # (D,)
+   c_raw = torch.randn(K - 1) * SIGMA_C      # (K-1,)
+   c = torch.cat([c_raw, -c_raw.sum(keepdim=True)])  # (K,), sum-to-zero
+   ```
+
+2. **Assign each driver to a constructor** (fixed round-robin across draws):
+   ```python
+   cons_assignment = torch.arange(D) % K     # (D,) — stable, not resampled
+   ```
+
+3. **Compute performance scores:**
+   ```python
+   p = s + c[cons_assignment]  # (D,)
+   ```
+
+4. **Identify the prior-fastest driver** (highest p):
+   ```python
+   fastest_driver = p.argmax()
+   ```
+
+5. **Sample a finishing order from Plackett-Luce** (no torch.distributions.PlackettLuce needed — use the sequential sampling procedure):
+   ```python
+   # PL draw: repeatedly sample winner from softmax of remaining scores
+   remaining = list(range(D))
+   winner = None
+   order = []
+   for _ in range(D):
+       scores = p[torch.tensor(remaining)]
+       probs = torch.softmax(scores, dim=0)
+       pick = torch.multinomial(probs, 1).item()
+       order.append(remaining[pick])
+       remaining.pop(pick)
+   winner = order[0]
+   ```
+
+6. **Record whether the fastest driver won:**
+   ```python
+   fastest_won = (winner == fastest_driver.item())
+   ```
+
+### Assertions
+
 ```python
-# logsumexp over columns i..max_N-1 (padding -inf is correctly ignored by logsumexp)
-tail_lse = torch.logsumexp(padded[:, i:], dim=1)   # (R,)
-log_p_i  = padded[:, i] - tail_lse                  # (R,)
+win_rate = sum(fastest_won_list) / N_DRAWS
+
+# P1-P20 gap: compute across all draws, take the mean
+# gap_draw = p.max() - p.min()  (before drawing the order)
+mean_gap = sum(gaps) / N_DRAWS
+
+assert 0.20 <= win_rate <= 0.80, (
+    f"Prior win rate {win_rate:.2f} outside [0.20, 0.80] — "
+    "priors may be too flat or too sharp"
+)
+assert 1.0 <= mean_gap <= 5.0, (
+    f"Mean P1-P20 performance gap {mean_gap:.2f} outside [1.0, 5.0]"
+)
 ```
 
-**Step 3 — Mask and sum:**
+Print a summary table before asserting:
+```
+Prior predictive check (100 draws, 20 drivers, 10 constructors):
+  Prior-fastest driver win rate: 0.XX
+  Mean P1-P20 performance gap:   X.XX
+```
 
-Build a validity mask: position `i` in race `r` is valid iff `i < race_lengths[r]`.
+### Full function skeleton
 
 ```python
-# valid[r, i] = True iff i < race_lengths[r]
-i_range = torch.arange(max_N, device=performances.device)
-valid = i_range.unsqueeze(0) < race_lengths.unsqueeze(1)  # (R, max_N)
-```
+def test_prior_predictive():
+    torch.manual_seed(42)
 
-Where `valid` is False, `log_p_i` will be `nan` (from `-inf - (-inf)`). Zero these
-out before summing:
+    D, K = 20, 10
+    N_DRAWS = 100
+    SIGMA_S, SIGMA_C = 1.0, 1.0
 
-```python
-log_p_matrix[:, i] = torch.where(valid[:, i], log_p_i, torch.zeros_like(log_p_i))
-```
+    cons_assignment = torch.arange(D) % K  # fixed round-robin
 
-Return `log_p_matrix[valid].sum()` or equivalently the masked sum. The result is a
-scalar.
+    fastest_won_list = []
+    gaps = []
 
-### Numerical correctness notes
+    for _ in range(N_DRAWS):
+        s = torch.randn(D) * SIGMA_S
+        c_raw = torch.randn(K - 1) * SIGMA_C
+        c = torch.cat([c_raw, -c_raw.sum(keepdim=True)])
+        p = s + c[cons_assignment]
 
-- `torch.logsumexp` handles `-inf` entries correctly (ignores them), so no special
-  treatment of padding is needed in the logsumexp call itself.
-- The only dangerous case is `padded[:, i] - tail_lse` when both are `-inf` (i.e.,
-  column `i` is entirely padding). Use `torch.where(valid, ...)` to mask these to 0.
-- The function must return a scalar (0-dim tensor), not a `(1,)` tensor.
+        fastest_driver = p.argmax().item()
+        gaps.append((p.max() - p.min()).item())
 
-### Hand-verifiable example
+        # PL sequential draw
+        remaining = list(range(D))
+        order = []
+        for _ in range(D):
+            scores = p[torch.tensor(remaining)]
+            probs = torch.softmax(scores, dim=0)
+            pick = torch.multinomial(probs, 1).item()
+            order.append(remaining[pick])
+            remaining.pop(pick)
 
-Three drivers with performances `[2.0, 1.0, 0.0]` in correct order:
+        fastest_won_list.append(order[0] == fastest_driver)
 
-```
-term 0: 2.0 - logsumexp([2.0, 1.0, 0.0]) = 2.0 - log(e² + e¹ + e⁰)
-                                           = 2.0 - log(11.107) ≈ 2.0 - 2.4076 = -0.4076
-term 1: 1.0 - logsumexp([1.0, 0.0])       = 1.0 - log(e¹ + e⁰)
-                                           = 1.0 - log(3.718) ≈ 1.0 - 1.3133 = -0.3133
-term 2: 0.0 - logsumexp([0.0])             = 0.0 - 0.0 = 0.0
+    win_rate = sum(fastest_won_list) / N_DRAWS
+    mean_gap = sum(gaps) / N_DRAWS
 
-total ≈ -0.7209
+    print(f"\nPrior predictive check ({N_DRAWS} draws, {D} drivers, {K} constructors):")
+    print(f"  Prior-fastest driver win rate: {win_rate:.2f}")
+    print(f"  Mean P1-P20 performance gap:   {mean_gap:.2f}")
+
+    assert 0.20 <= win_rate <= 0.80, ...
+    assert 1.0 <= mean_gap <= 5.0, ...
 ```
 
 ---
 
 ## Verification Commands
 
-Run these after implementation. Report all output.
-
 ```bash
-# 1. Hand check — must print approx -0.7209
-uv run python -c "
-import torch
-from models.pgm_backend.likelihood import plackett_luce_log_prob
-
-# 3-driver single race
-lp = plackett_luce_log_prob(torch.tensor([2., 1., 0.]), torch.tensor([3]))
-print('3-driver log-prob:', lp.item())
-assert abs(lp.item() - (-0.7209)) < 1e-3, f'Expected -0.7209, got {lp.item()}'
-print('Hand check: PASSED')
-"
-
-# 2. Ordering check — correct order must beat reversed order
-uv run python -c "
-import torch
-from models.pgm_backend.likelihood import plackett_luce_log_prob
-
-correct  = plackett_luce_log_prob(torch.tensor([2., 1., 0.]), torch.tensor([3]))
-reversed_ = plackett_luce_log_prob(torch.tensor([0., 1., 2.]), torch.tensor([3]))
-print('Correct order log-prob:', correct.item())
-print('Reversed order log-prob:', reversed_.item())
-assert correct > reversed_, 'Correct ordering must have higher log-prob'
-print('Ordering check: PASSED')
-"
-
-# 3. Two-race additivity check
-uv run python -c "
-import torch
-from models.pgm_backend.likelihood import plackett_luce_log_prob
-
-perfs_r1 = torch.tensor([2., 1., 0.])
-perfs_r2 = torch.tensor([1., 0., -1.])
-joint = plackett_luce_log_prob(torch.cat([perfs_r1, perfs_r2]), torch.tensor([3, 3]))
-r1_only = plackett_luce_log_prob(perfs_r1, torch.tensor([3]))
-r2_only = plackett_luce_log_prob(perfs_r2, torch.tensor([3]))
-print('Joint:', joint.item())
-print('R1 + R2:', (r1_only + r2_only).item())
-assert abs(joint.item() - (r1_only + r2_only).item()) < 1e-5, 'Additivity failed'
-print('Two-race additivity: PASSED')
-"
-
-# 4. Non-positivity check
-uv run python -c "
-import torch
-from models.pgm_backend.likelihood import plackett_luce_log_prob
-
-for _ in range(20):
-    n = torch.randint(2, 10, (1,)).item()
-    perfs = torch.randn(n)
-    lp = plackett_luce_log_prob(perfs, torch.tensor([n]))
-    assert lp.item() <= 1e-6, f'Log-prob > 0: {lp.item()}'
-print('Non-positivity check: PASSED (20 random races)')
-"
-
-# 5. Mixed race lengths
-uv run python -c "
-import torch
-from models.pgm_backend.likelihood import plackett_luce_log_prob
-
-perfs = torch.tensor([3., 2., 1., 0.,   # race 1: 4 drivers
-                       1., 0.])           # race 2: 2 drivers
-lp = plackett_luce_log_prob(perfs, torch.tensor([4, 2]))
-print('Mixed race lengths log-prob:', lp.item())
-assert lp.item() <= 0
-assert not torch.isnan(lp)
-print('Mixed race lengths: PASSED')
-"
+# Run the prior predictive test
+uv run python -m pytest models/pgm_backend/tests/test_prior_predictive.py -v -s
 ```
+
+The `-s` flag ensures the print output is visible.
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] `plackett_luce_log_prob(tensor([2., 1., 0.]), tensor([3]))` ≈ -0.7209 (tolerance 1e-3)
-- [ ] Correct ordering returns strictly higher log-prob than reversed ordering
-- [ ] Two-race joint log-prob equals sum of individual log-probs (additivity, tolerance 1e-5)
-- [ ] Log-prob ≤ 0 for 20 random inputs
-- [ ] Mixed race lengths (e.g., `[4, 2]`) returns a finite scalar, no NaN
-- [ ] All five verification commands run without error
+- [ ] Prior-fastest driver win rate is between 0.20 and 0.80 (over 100 draws, seed=42)
+- [ ] Mean P1–P20 performance gap is between 1.0 and 5.0
+- [ ] Test passes with `pytest models/pgm_backend/tests/test_prior_predictive.py -v`
+- [ ] Summary table is printed to stdout
 
 ---
 
 ## When You Are Done
 
 **Step 1 — Append to `tasks/handoff_log.md`** using the template at the bottom of that file:
-- Confirm which verification commands passed
-- Note any deviations from the algorithm spec (e.g. if you used a different vectorisation)
-- Note the actual value of the 3-driver hand check
+- Report the actual win rate and mean gap values
+- Note whether the test passed or required any adjustment to the bounds
+- Note if sigma values needed to change (they should not — this is just a verification)
 
-**Step 2 — Report back:**
-1. The full output of all five verification commands
-2. Any deviations from the spec you made, and why
-3. Whether all acceptance criteria pass (yes/no per criterion)
+**Step 2 — Append to `tasks/report_notes.md`** (this IS a non-obvious decision for the report):
+
+```markdown
+## T2b — Prior predictive check: sigma_s=1.0, sigma_c=1.0 confirmed plausible
+
+**Decision:** sigma_s = 1.0, sigma_c = 1.0 are retained as prior scales.
+
+**Reasoning:** Prior predictive check (100 draws, 20 drivers, 10 constructors) showed
+prior-fastest driver win rate = [actual value] and mean P1–P20 gap = [actual value],
+both within acceptable bounds [0.20, 0.80] and [1.0, 5.0].
+
+**For the report:** Priors are weakly informative — they allow the data to dominate
+inference without being nearly uniform (which would make the model unidentifiable).
+```
+
+**Step 3 — Report back:**
+1. Full output of the verification command (include the printed summary table)
+2. Whether both assertions passed
+3. The actual win rate and gap values
 
 Then stop. Do not implement T3.
