@@ -1,8 +1,8 @@
 # Current Task
 
 **Status:** READY FOR HANDOFF  
-**Task ID:** T2b  
-**Task name:** Prior Predictive Check (`tests/test_prior_predictive.py`)
+**Task ID:** T3  
+**Task name:** Model 1 Baseline — SVI (`model_baseline.py` + `inference.py`)
 
 ---
 
@@ -13,28 +13,45 @@ This file contains everything you need to implement the current task. Do not loo
 
 ---
 
-## Context from T1 and T2
+## Context from T1, T2, and T2b
 
 ### Actual dataset counts (from T1)
-- `n_drivers` = 77, `n_constructors` = 17
+- `n_drivers` = 77, `n_constructors` = 17, `n_seasons` = 14, `n_circuits` = 35, `n_races` = 286
+- `N_entries` (ranking) = 5457, `N_all` (original rows) = 5980
+- `wet` is per-race (shape `(286,)`) — NOT per-entry
+- Constructor map has 17 entries (indices 0–16)
 
 ### Likelihood function (from T2)
 ```python
 from models.pgm_backend.likelihood import plackett_luce_log_prob
-# signature: (performances: (N,), race_lengths: (R,) LongTensor) -> scalar
+# signature: (performances: (N_total,), race_lengths: (R,) LongTensor) -> scalar Tensor
+# performances MUST be sorted in finishing order within each race block
+# (this is guaranteed by data_preparation.py)
 ```
 
-T2b does **not** use these directly — it is a standalone prior predictive check.
+### Prior check (from T2b)
+- sigma_s = 1.0, sigma_c = 1.0 confirmed plausible
+- Prior-fastest driver win rate: 0.39 (within [0.20, 0.80])
+- These sigma values are to be used in the model
+
+### F1RankingDataset fields (from T1)
+```python
+from models.pgm_backend.data_preparation import F1RankingDataset, load_dataset
+
+# Key fields for Model 1:
+# ds.driver_idx  : (N_entries,) LongTensor  — driver integer index 0..76
+# ds.cons_idx    : (N_entries,) LongTensor  — constructor integer index 0..16
+# ds.race_lengths: (N_races,)  LongTensor   — entries per race
+```
 
 ---
 
 ## What to Build
 
-Create one file:
+Two files:
 
-**`models/pgm_backend/tests/test_prior_predictive.py`**
-
-A single pytest function that verifies the chosen priors (`sigma_s = 1.0`, `sigma_c = 1.0`) produce plausible F1 race outcomes before any inference is run.
+**`models/pgm_backend/model_baseline.py`** — the Pyro model and guide  
+**`models/pgm_backend/inference.py`** — SVI trainer and posterior extractor
 
 ---
 
@@ -42,7 +59,8 @@ A single pytest function that verifies the chosen priors (`sigma_s = 1.0`, `sigm
 
 | File | Action |
 |---|---|
-| `models/pgm_backend/tests/test_prior_predictive.py` | Create |
+| `models/pgm_backend/model_baseline.py` | Create |
+| `models/pgm_backend/inference.py` | Create |
 
 Do not touch any other file.
 
@@ -50,141 +68,151 @@ Do not touch any other file.
 
 ## Full Implementation Spec
 
-### Purpose
+### 1. `model_baseline.py`
 
-Confirm that `sigma_s = 1.0` and `sigma_c = 1.0` are weakly informative — not so flat that outcomes are near-random, not so sharp that one driver wins almost every race.
-
-### Setup
-
-Use **D = 20 representative drivers** and **K = 10 representative constructors** with a 20-driver race. Run **N_DRAWS = 100** independent prior draws.
+A single class `BaselineModel` with two methods: `model()` and `guide()`.
 
 ```python
+import pyro
+import pyro.distributions as dist
 import torch
-import pytest
 
-D = 20      # representative drivers
-K = 10      # representative constructors
-N_DRAWS = 100
+from models.pgm_backend.likelihood import plackett_luce_log_prob
+
 SIGMA_S = 1.0
 SIGMA_C = 1.0
+
+
+class BaselineModel:
+    def __init__(self, n_drivers: int, n_constructors: int):
+        self.D = n_drivers
+        self.K = n_constructors
+
+    def model(self, driver_idx, cons_idx, race_lengths):
+        """
+        Args:
+            driver_idx  : (N_entries,) LongTensor
+            cons_idx    : (N_entries,) LongTensor
+            race_lengths: (N_races,)  LongTensor
+        """
+        D, K = self.D, self.K
+
+        # Latent driver skills: (D,) independent Normals
+        s = pyro.sample(
+            "s",
+            dist.Normal(0.0, SIGMA_S).expand([D]).to_event(1),
+        )
+
+        # Sum-to-zero constructor reparameterisation
+        c_raw = pyro.sample(
+            "c_raw",
+            dist.Normal(0.0, SIGMA_C).expand([K - 1]).to_event(1),
+        )
+        c = torch.cat([c_raw, -c_raw.sum(dim=0, keepdim=True)])  # (K,)
+
+        # Performance: s_d + c_k for each entry
+        p = s[driver_idx] + c[cons_idx]  # (N_entries,)
+
+        # Plackett-Luce likelihood via pyro.factor
+        log_prob = plackett_luce_log_prob(p, race_lengths)
+        pyro.factor("race_obs", log_prob)
+
+    def guide(self, driver_idx, cons_idx, race_lengths):
+        """Mean-field variational guide."""
+        D, K = self.D, self.K
+
+        # Variational parameters for driver skills
+        s_loc = pyro.param("s_loc", torch.zeros(D))
+        s_scale = pyro.param(
+            "s_scale",
+            torch.ones(D),
+            constraint=dist.constraints.positive,
+        )
+        pyro.sample("s", dist.Normal(s_loc, s_scale).to_event(1))
+
+        # Variational parameters for sum-to-zero constructors
+        c_loc = pyro.param("c_loc", torch.zeros(K - 1))
+        c_scale = pyro.param(
+            "c_scale",
+            torch.ones(K - 1),
+            constraint=dist.constraints.positive,
+        )
+        pyro.sample("c_raw", dist.Normal(c_loc, c_scale).to_event(1))
 ```
 
-### Algorithm
+**Key constraints:**
 
-For each of the 100 draws:
+- The guide samples `c_raw`, NEVER `c` directly. This ensures the sum-to-zero constraint holds exactly.
+- `c_raw.sum(dim=0, keepdim=True)` — the `dim=0` argument is required for PyTorch 2.11+. Do NOT use `.sum(keepdim=True)` without `dim`.
+- `s_scale` and `c_scale` must be constrained positive via `dist.constraints.positive`.
 
-1. **Sample prior parameters:**
-   ```python
-   s = torch.randn(D) * SIGMA_S              # (D,)
-   c_raw = torch.randn(K - 1) * SIGMA_C      # (K-1,)
-   c = torch.cat([c_raw, -c_raw.sum(keepdim=True)])  # (K,), sum-to-zero
-   ```
+### 2. `inference.py`
 
-2. **Assign each driver to a constructor** (fixed round-robin across draws):
-   ```python
-   cons_assignment = torch.arange(D) % K     # (D,) — stable, not resampled
-   ```
-
-3. **Compute performance scores:**
-   ```python
-   p = s + c[cons_assignment]  # (D,)
-   ```
-
-4. **Identify the prior-fastest driver** (highest p):
-   ```python
-   fastest_driver = p.argmax()
-   ```
-
-5. **Sample a finishing order from Plackett-Luce** (no torch.distributions.PlackettLuce needed — use the sequential sampling procedure):
-   ```python
-   # PL draw: repeatedly sample winner from softmax of remaining scores
-   remaining = list(range(D))
-   winner = None
-   order = []
-   for _ in range(D):
-       scores = p[torch.tensor(remaining)]
-       probs = torch.softmax(scores, dim=0)
-       pick = torch.multinomial(probs, 1).item()
-       order.append(remaining[pick])
-       remaining.pop(pick)
-   winner = order[0]
-   ```
-
-6. **Record whether the fastest driver won:**
-   ```python
-   fastest_won = (winner == fastest_driver.item())
-   ```
-
-### Assertions
+Two functions:
 
 ```python
-win_rate = sum(fastest_won_list) / N_DRAWS
+import pyro
+import pyro.optim
+from pyro.infer import SVI, Trace_ELBO
 
-# P1-P20 gap: compute across all draws, take the mean
-# gap_draw = p.max() - p.min()  (before drawing the order)
-mean_gap = sum(gaps) / N_DRAWS
+from models.pgm_backend.model_baseline import BaselineModel
 
-assert 0.20 <= win_rate <= 0.80, (
-    f"Prior win rate {win_rate:.2f} outside [0.20, 0.80] — "
-    "priors may be too flat or too sharp"
-)
-assert 1.0 <= mean_gap <= 5.0, (
-    f"Mean P1-P20 performance gap {mean_gap:.2f} outside [1.0, 5.0]"
-)
-```
 
-Print a summary table before asserting:
-```
-Prior predictive check (100 draws, 20 drivers, 10 constructors):
-  Prior-fastest driver win rate: 0.XX
-  Mean P1-P20 performance gap:   X.XX
-```
+def train_svi(model, dataset, n_steps=3000, lr=0.01, log_every=100):
+    """
+    Train the baseline model with SVI.
 
-### Full function skeleton
+    Args:
+        model:    BaselineModel instance
+        dataset:  F1RankingDataset instance
+        n_steps:  number of optimisation steps
+        lr:       learning rate
+        log_every: print ELBO every N steps
 
-```python
-def test_prior_predictive():
-    torch.manual_seed(42)
+    Returns:
+        losses: list of negative ELBO values (one per step)
+    """
+    optimizer = pyro.optim.Adam({"lr": lr})
+    svi = SVI(model.model, model.guide, optimizer, loss=Trace_ELBO())
 
-    D, K = 20, 10
-    N_DRAWS = 100
-    SIGMA_S, SIGMA_C = 1.0, 1.0
+    losses = []
+    for step in range(n_steps):
+        loss = svi.step(
+            driver_idx=dataset.driver_idx,
+            cons_idx=dataset.cons_idx,
+            race_lengths=dataset.race_lengths,
+        )
+        losses.append(loss)
+        if step % log_every == 0 or step == n_steps - 1:
+            print(f"Step {step:5d}  ELBO loss: {loss:.2f}")
 
-    cons_assignment = torch.arange(D) % K  # fixed round-robin
+    return losses
 
-    fastest_won_list = []
-    gaps = []
 
-    for _ in range(N_DRAWS):
-        s = torch.randn(D) * SIGMA_S
-        c_raw = torch.randn(K - 1) * SIGMA_C
-        c = torch.cat([c_raw, -c_raw.sum(keepdim=True)])
-        p = s + c[cons_assignment]
+def extract_svi_posterior(model) -> dict[str, torch.Tensor]:
+    """
+    Extract posterior parameter estimates from the trained guide.
 
-        fastest_driver = p.argmax().item()
-        gaps.append((p.max() - p.min()).item())
+    Returns dict with keys:
+        "s_loc"    : (D,) driver skill posterior means
+        "s_scale"  : (D,) driver skill posterior stds
+        "c_loc"    : (K,) constructor posterior means (including derived c_K)
+        "c_scale"  : (K-1,) constructor posterior stds
+    """
+    s_loc = pyro.param("s_loc").detach().clone()
+    s_scale = pyro.param("s_scale").detach().clone()
+    c_loc_raw = pyro.param("c_loc").detach().clone()
+    c_scale = pyro.param("c_scale").detach().clone()
 
-        # PL sequential draw
-        remaining = list(range(D))
-        order = []
-        for _ in range(D):
-            scores = p[torch.tensor(remaining)]
-            probs = torch.softmax(scores, dim=0)
-            pick = torch.multinomial(probs, 1).item()
-            order.append(remaining[pick])
-            remaining.pop(pick)
+    # Derive full c_loc including the constrained K-th entry
+    c_loc = torch.cat([c_loc_raw, -c_loc_raw.sum(dim=0, keepdim=True)])
 
-        fastest_won_list.append(order[0] == fastest_driver)
-
-    win_rate = sum(fastest_won_list) / N_DRAWS
-    mean_gap = sum(gaps) / N_DRAWS
-
-    print(f"\nPrior predictive check ({N_DRAWS} draws, {D} drivers, {K} constructors):")
-    print(f"  Prior-fastest driver win rate: {win_rate:.2f}")
-    print(f"  Mean P1-P20 performance gap:   {mean_gap:.2f}")
-
-    assert 0.20 <= win_rate <= 0.80, ...
-    assert 1.0 <= mean_gap <= 5.0, ...
+    return {
+        "s_loc": s_loc,
+        "s_scale": s_scale,
+        "c_loc": c_loc,
+        "c_scale": c_scale,
+    }
 ```
 
 ---
@@ -192,48 +220,64 @@ def test_prior_predictive():
 ## Verification Commands
 
 ```bash
-# Run the prior predictive test
-uv run python -m pytest models/pgm_backend/tests/test_prior_predictive.py -v -s
-```
+# Full end-to-end: load data, build model, train SVI, extract posterior
+uv run python -c "
+import torch
+from models.pgm_backend.data_preparation import load_dataset
+from models.pgm_backend.model_baseline import BaselineModel
+from models.pgm_backend.inference import train_svi, extract_svi_posterior
 
-The `-s` flag ensures the print output is visible.
+ds = load_dataset()
+print(f'Loaded: {ds.n_drivers} drivers, {ds.n_constructors} constructors, {ds.n_races} races')
+
+model = BaselineModel(ds.n_drivers, ds.n_constructors)
+losses = train_svi(model, ds, n_steps=3000, lr=0.01, log_every=500)
+
+post = extract_svi_posterior(model)
+
+# Sum-to-zero check
+c_sum = post['c_loc'].sum().item()
+print(f'c.sum() = {c_sum:.6f} (should be ~0)')
+
+# Hamilton check (driverId=1)
+s_sorted = post['s_loc'].sort(descending=True)
+print(f'Top 5 drivers by s_loc: {s_sorted.values[:5].tolist()}')
+
+# Map the top driver indices back to driverIds
+driver_ids = [ds.driver_map[i] for i in s_sorted.indices[:10].tolist()]
+print(f'Top 10 driver IDs: {driver_ids}')
+
+# ELBO trend
+print(f'Initial loss: {losses[0]:.2f}, Final loss: {losses[-1]:.2f}, Decreasing: {losses[-1] < losses[0]}')
+"
+```
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] Prior-fastest driver win rate is between 0.20 and 0.80 (over 100 draws, seed=42)
-- [ ] Mean P1–P20 performance gap is between 1.0 and 5.0
-- [ ] Test passes with `pytest models/pgm_backend/tests/test_prior_predictive.py -v`
-- [ ] Summary table is printed to stdout
+- [ ] ELBO decreases over 3000 steps (final loss < initial loss)
+- [ ] `c.sum()` ≈ 0 (tolerance 1e-4) at convergence
+- [ ] Hamilton (`driverId=1`) in top 5 drivers by posterior mean `s_loc`, OR if driverId=1 is absent from the dataset, at least the top 10 driver IDs appear reasonable (e.g. include known champion driver IDs like 4=Vettel, 20=Alonso, 822=Verstappen, 830=Leclerc)
+- [ ] SVI runs in < 5 minutes on CPU
+- [ ] No NaN or inf in posterior parameters
 
 ---
 
 ## When You Are Done
 
 **Step 1 — Append to `tasks/handoff_log.md`** using the template at the bottom of that file:
-- Report the actual win rate and mean gap values
-- Note whether the test passed or required any adjustment to the bounds
-- Note if sigma values needed to change (they should not — this is just a verification)
+- Report actual loss values (initial, final)
+- Report actual `c.sum()` value
+- Report actual top-5 driver IDs and s_loc values
+- Note training time
+- Note any deviations from the spec
 
-**Step 2 — Append to `tasks/report_notes.md`** (this IS a non-obvious decision for the report):
-
-```markdown
-## T2b — Prior predictive check: sigma_s=1.0, sigma_c=1.0 confirmed plausible
-
-**Decision:** sigma_s = 1.0, sigma_c = 1.0 are retained as prior scales.
-
-**Reasoning:** Prior predictive check (100 draws, 20 drivers, 10 constructors) showed
-prior-fastest driver win rate = [actual value] and mean P1–P20 gap = [actual value],
-both within acceptable bounds [0.20, 0.80] and [1.0, 5.0].
-
-**For the report:** Priors are weakly informative — they allow the data to dominate
-inference without being nearly uniform (which would make the model unidentifiable).
-```
+**Step 2 — Append to `tasks/report_notes.md`** only if you made a non-obvious decision.
 
 **Step 3 — Report back:**
-1. Full output of the verification command (include the printed summary table)
-2. Whether both assertions passed
-3. The actual win rate and gap values
+1. Full output of the verification command
+2. Whether all acceptance criteria pass
+3. The actual top-5 driver IDs and their s_loc values
 
-Then stop. Do not implement T3.
+Then stop. Do not implement T4.

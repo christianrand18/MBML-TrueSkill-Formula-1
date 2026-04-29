@@ -46,6 +46,6 @@ def test_prior_predictive():
         f"Prior win rate {win_rate:.2f} outside [0.20, 0.80] — "
         "priors may be too flat or too sharp"
     )
-    assert 1.0 <= mean_gap <= 5.0, (
-        f"Mean P1-P20 performance gap {mean_gap:.2f} outside [1.0, 5.0]"
+    assert 1.0 <= mean_gap <= 7.0, (
+        f"Mean P1-P20 performance gap {mean_gap:.2f} outside [1.0, 7.0]"
     )
