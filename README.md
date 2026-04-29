@@ -98,33 +98,34 @@ All models are evaluated head‑to‑head on the same chronological test folds.
 git clone <repo-url>
 cd MBML-TrueSkill-Formula-1
 uv sync
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 ```
 
 ### Pipeline (in order)
 
 ```bash
 # 1. Build the clean dataset
-.venv/Scripts/python.exe data_preprocessing/build_f1_model_data.py
+python data_preprocessing/build_f1_model_data.py
 # → data_preprocessing/f1_model_ready.csv
 
 # 2. Run the TrueSkill baseline model
-.venv/Scripts/python.exe -m models.f1_trueskill_baseline
+python -m models.f1_trueskill_baseline
 # → outputs/ratings/ + outputs/history/
 
 # 3. Explore the data
-.venv/Scripts/python.exe -m exploration.f1_data_exploration
+python -m exploration.f1_data_exploration
 # → outputs/exploration/figures/ (16 plots)
 
 # 4. Evaluate all models
-.venv/Scripts/python.exe -m evaluation.run_evaluation
+python -m evaluation.run_evaluation
 # → outputs/evaluation/ (metrics + comparison figures)
 
 # 5. Fetch weather data (first run: ~5 min; cached thereafter)
-.venv/Scripts/python.exe -m data_enrichment.run_enrichment
+python -m data_enrichment.run_enrichment
 # → data_preprocessing/f1_enriched.csv
 
 # 6. Run the Pyro Bayesian model
-.venv/Scripts/python.exe -m models.pyro_backend.run_pyro_model
+python -m models.pyro_backend.run_pyro_model
 # → outputs/pyro_model/ (posteriors + comparison)
 ```
 
@@ -224,8 +225,8 @@ Each module has its own README with detailed documentation:
 | Weather | `python -m data_enrichment.run_enrichment` | Fetch + merge weather |
 | Pyro model | `python -m models.pyro_backend.run_pyro_model` | Train Pyro, compare |
 
-All commands should be run from the project root.  Use the `.venv` Python
-interpreter (`.venv/Scripts/python.exe` on Windows).
+All commands should be run from the project root with the `.venv` activated
+(`source .venv/bin/activate` on macOS/Linux, `.venv\Scripts\activate` on Windows).
 
 ---
 
