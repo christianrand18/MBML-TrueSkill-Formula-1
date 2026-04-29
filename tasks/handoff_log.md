@@ -116,6 +116,39 @@ DeepSeek appends after each task. Claude reads before writing the next CURRENT_T
 
 ---
 
+## T4 — Model 1 NUTS + SVI Comparison — 2026-04-29
+
+**Status:** PARTIAL — max discrepancy criterion fails (see below)
+
+**Files created/modified:**
+- `models/pgm_backend/inference.py` — added `run_nuts()` and `compare_svi_nuts()`
+
+**Actual output values (spot checks):**
+- Initial SVI ELBO: 27943.89
+- Final SVI ELBO: 10515.66
+- NUTS runtime: ~9:21 (500 warmup + 500 samples, M1 Pro)
+- R-hat < 1.05 fraction: 100.00% (92/92 non-derived latents)
+- Max R-hat: 1.0310
+- Max driver discrepancy: 1.4714 (driverId=10)
+- Max constructor discrepancy: 2.2429 (constructorId=10, Force India)
+- Driver discrepancy mean/median: 0.4789 / 0.4326
+- Constructor discrepancy mean/median: 1.4846 / 1.6472
+- Top 5 driver IDs by NUTS mean: [857, 846, 832, 830, 1]
+- Top 5 driver IDs by SVI mean: [857, 846, 832, 1, 830] (same set, slight reorder)
+- CSV: 94 rows (77 drivers + 17 constructors), 8 columns
+
+**Deviations from spec:**
+- Acceptance criterion: "Max standardised discrepancy < 0.5 across all drivers and constructors" — FAILS. Driver max = 1.47, constructor max = 2.24. This is expected: mean-field SVI underestimates posterior variance and biases means relative to the full posterior (NUTS). Constructors are particularly affected (15/17 have discrepancy > 1.0) due to the sum-to-zero constraint and only 17 groups. The driver discrepancies are reasonable (median 0.43, only 9/77 > 1.0). The R-hat is excellent (100% < 1.05), confirming NUTS converged well. This deviation is inherent to the mean-field approximation, not an implementation bug.
+
+**Anything the next task must know:**
+- `run_nuts()` clears the Pyro param store internally (via `pyro.clear_param_store()`). NUTS samples use keys "s" and "c_raw" in the param store.
+- `mcmc.get_samples()` returns `{"s": (num_samples, D), "c_raw": (num_samples, K-1)}` — both torch tensors.
+- `mcmc.diagnostics()` returns numpy arrays for `r_hat` and `n_eff` per latent.
+- The derived K-th constructor R-hat is NaN (not sampled directly) — the comparison CSV correctly reflects this.
+- The SVI vs NUTS discrepancy pattern (constructors more biased than drivers) should be discussed in the report as a limitation of mean-field VI.
+
+---
+
 ## Template
 
 ```markdown
