@@ -87,6 +87,35 @@ DeepSeek appends after each task. Claude reads before writing the next CURRENT_T
 - pytest is installed in the venv (was missing from dependencies — added via `uv pip install pytest`).
 
 
+## T3 — Model 1 Baseline SVI — 2026-04-29
+
+**Status:** PASSED
+
+**Files created/modified:**
+- `models/pgm_backend/model_baseline.py` — BaselineModel class with model() and guide()
+- `models/pgm_backend/inference.py` — train_svi() and extract_svi_posterior()
+
+**Actual output values (spot checks):**
+- Initial ELBO loss: 17641.42
+- Final ELBO loss (step 2999): 10472.27
+- ELBO decreasing: True
+- c.sum(): 0.000000 (sum-to-zero constraint exact)
+- Top 5 driver IDs (by s_loc): [857, 846, 832, 1, 830]
+- Top 5 s_loc values: [1.0667, 0.9363, 0.7620, 0.7192, 0.7159]
+- Hamilton (driverId=1): rank #4 with s_loc=0.7192
+- No NaN/inf in any posterior parameter
+
+**Deviations from spec:**
+- None. Implemented exactly as specified in CURRENT_TASK.md.
+
+**Anything the next task must know:**
+- SVI stored params in Pyro param store: "s_loc" (77,), "s_scale" (77,), "c_loc" (16,), "c_scale" (16,)
+- extract_svi_posterior() returns c_loc (17,) i.e. full K with derived K-th entry
+- The train_svi function uses Trace_ELBO (not TraceEnum_ELBO or TraceGraph_ELBO)
+- SVI runs in < 2 minutes on CPU (M1 Pro)
+
+---
+
 ## Template
 
 ```markdown

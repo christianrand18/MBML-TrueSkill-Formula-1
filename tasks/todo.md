@@ -8,7 +8,7 @@
 
 ## Phase 2 — Baseline Model
 
-- [ ] **T3** `model_baseline.py` + `inference.py` (SVI) — static skills, sum-to-zero constructor, Plackett-Luce factor, mean-field guide. Verify: ELBO decreasing, Hamilton top-5, < 5 min.
+- [x] **T3** `model_baseline.py` + `inference.py` (SVI) — static skills, sum-to-zero constructor, Plackett-Luce factor, mean-field guide. Verify: ELBO decreasing, Hamilton top-5, < 5 min. ✓ PASSED (initial loss ~18198→10488, c.sum()=0.000000, Hamilton rank #5, no NaN/inf, ~2 min)
 - [ ] **T4** `inference.py` (NUTS) — add NUTS path, SVI vs NUTS comparison CSV. Verify: R-hat < 1.05, discrepancy < 0.5, < 30 min.
 - [ ] **T5** `tests/test_synthetic_recovery.py` + `tests/test_likelihood.py` — ancestral sampling, run inference, assert recovery ±0.8. Verify: `pytest models/pgm_backend/tests/ -v` passes.
 
