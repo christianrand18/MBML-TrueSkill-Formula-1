@@ -534,3 +534,13 @@ The model's top-5 `delta_d` indices are [44, 2, 60, 15, 0]. Alonso (idx 4) ranks
 **For the report:** Both findings should be discussed as model-discovered data patterns rather than failures. For `beta_pi`, note that pit-stop time is a noisy proxy for execution speed because strategy covaries with team quality. For `delta_d`, emphasise that the model infers wet-weather skill from race outcomes rather than using external labels, and that the small number of wet races (≈30) means the posterior has high uncertainty — a 95% credible interval for most `delta_d` values would likely include zero.
 
 ---
+
+## T8 — Prior Predictive Plot Bug Fix
+
+**Decision:** Fixed `_plot_prior_predictive()` in `run_pgm.py` to count only P1 finishes as "wins" for the prior-fastest driver.
+
+**Reasoning:** The original plot code incremented `fastest_won` whenever the prior-fastest driver was picked at ANY position in the simulated race (P1, P2, ..., P20), not just when they finished first. Because the driver with the highest performance score has the highest softmax probability at every elimination step, they are almost always picked somewhere in the top 20, producing a spurious win rate of ~1.00. The fix tracks position and only counts `pos == 0` as a win. The corrected win rate is 0.29, within the 20–80% acceptance band and consistent with the `test_prior_predictive.py` test result.
+
+**For the report:** The prior predictive check remains valid — the test infrastructure was always correct; only the standalone plot function had the bug.
+
+---

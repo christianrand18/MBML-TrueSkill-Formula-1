@@ -94,12 +94,13 @@ def _plot_prior_predictive():
         fastest_driver = p.argmax().item()
 
         remaining = list(range(D))
-        for _ in range(D):
+        for pos in range(D):
             scores = p[torch.tensor(remaining)]
             probs = torch.softmax(scores, dim=0)
             pick = torch.multinomial(probs, 1).item()
             if remaining[pick] == fastest_driver:
-                fastest_won += 1
+                if pos == 0:
+                    fastest_won += 1
                 break
             remaining.pop(pick)
 
