@@ -120,6 +120,20 @@ These are invariants. Any implementation that violates them is wrong.
 
 ---
 
+## Coding Behavior
+
+These apply to all code written in this project.
+
+**Think before coding.** State assumptions explicitly before implementing. If multiple interpretations exist, present them — don't pick silently. If something is unclear, stop and ask. Push back when a simpler approach exists.
+
+**Simplicity first.** Minimum code that solves the problem. No features beyond what was asked, no abstractions for single-use code, no error handling for impossible scenarios. If you write 200 lines and 50 would suffice, rewrite it.
+
+**Surgical changes.** Touch only what the task requires. Don't improve adjacent code, comments, or formatting. Match existing style. If you notice unrelated dead code, mention it — don't delete it. Remove only imports/variables/functions that your own changes made unused.
+
+**Goal-driven execution.** Define success criteria before starting. For multi-step tasks, state a brief plan with a verification step for each item. A task is not complete until verification passes.
+
+---
+
 ## DeepSeek Hard Constraints
 
 **Violation of any of these is a workflow failure. Stop and flag instead.**
