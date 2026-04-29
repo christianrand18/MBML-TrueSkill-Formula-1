@@ -44,15 +44,23 @@ emit all index tensors needed by every model.
 **Inputs:** `data_preprocessing/f1_enriched.csv`
 
 **Outputs:** `F1RankingDataset` dataclass with:
-- `driver_idx`, `cons_idx`, `season_idx`, `circuit_idx` — LongTensors `(N_total,)`
-- `race_idx` — LongTensor `(N_total,)` mapping each entry to its race
-- `pit_norm` — FloatTensor `(N_total,)` normalised pit-stop time
+
+Ranking entries (N_entries = finishers + driver-fault DNFs only, mechanical DNFs excluded):
+- `driver_idx`, `cons_idx`, `season_idx`, `circuit_idx` — LongTensors `(N_entries,)`
+- `race_idx` — LongTensor `(N_entries,)` mapping each entry to its race
+- `pit_norm` — FloatTensor `(N_entries,)` normalised pit-stop time
 - `wet` — FloatTensor `(N_races,)` binary wet indicator
-- `mech_mask` — FloatTensor `(N_total,)` 1.0=normal, 0.0=mechanical DNF
-- `race_order` — LongTensor `(N_total,)` within-race finishing position (0=winner)
+- `race_order` — LongTensor `(N_entries,)` within-race finishing position (0=winner)
 - `race_lengths` — LongTensor `(N_races,)` entries per race
 - Integer counts: `n_drivers`, `n_constructors`, `n_seasons`, `n_circuits`, `n_races`
 - Reverse maps: `driver_map`, `constructor_map` (int_id → int_idx and back)
+
+Model 3 reliability fields (N_all = all original rows including mechanical DNFs):
+- `is_mech` — BoolTensor `(N_all,)` True if mechanical DNF
+- `cons_idx_all` — LongTensor `(N_all,)` constructor index for all rows
+
+**There is no `mech_mask` field.** Mechanical DNF filtering is done in the preprocessor,
+not inside any model. No model ever applies a mask to zero out entries.
 
 **Key implementation notes:**
 1. Apply `CONSTRUCTOR_REMAP` dict BEFORE building integer indices
@@ -60,19 +68,21 @@ emit all index tensors needed by every model.
    - `MECHANICAL_STATUS_IDS` = frozenset({5,6,7,8,9,10,18,19,21,22,26,28,29,31,36,
      40,41,43,44,54,61,65,66,67,72,75,82,104,107,108,130,131})
    - Everything else (statusId not in {1,11..20} and not mechanical) = driver-fault
-3. Build `race_order` by sorting each race (Models 1 & 2 only include Finished + driver-fault):
+3. Filter out mechanical DNFs BEFORE building index tensors. N_entries only contains
+   finishers and driver-fault DNFs. Build `race_order` by sorting each remaining race:
    - Group: Finished (statusId 1, 11-20) ranked by positionOrder
    - Then: driver-fault DNFs ranked by positionOrder
-   - Mechanical DNFs are DROPPED from the ranking entries
-4. Emit `is_mech` BoolTensor `(N_all_entries,)` over ALL original rows for use in Model 3's
-   Bernoulli reliability term (this tensor is separate from the ranking entries)
+4. Separately, over ALL original rows (before filtering), emit:
+   - `is_mech`: BoolTensor `(N_all,)` True if mechanical DNF
+   - `cons_idx_all`: LongTensor `(N_all,)` constructor index for all rows
+   These two fields are used only by Model 3's Bernoulli reliability term.
 5. Normalise pit times per season (`(x - mean) / (std + 1e-8)`)
 6. Assert shape and dtype of EVERY tensor before returning
 
 **Acceptance criteria:**
 - `dataset.n_races == 286`
 - `dataset.n_drivers` in [17, 25] per season (spot check)
-- `dataset.mech_mask.sum() / len(dataset.mech_mask)` ≈ 0.17 (DNF rate from README)
+- `dataset.is_mech.sum() / len(dataset.is_mech)` ≈ 0.17 (mechanical DNF rate over all original rows)
 - No NaN or -inf in any tensor
 - Constructor 10 absorbs IDs 211 and 117 (assert in tests)
 
@@ -108,6 +118,51 @@ def plackett_luce_log_prob(
 
 ---
 
+### Task 2b — Prior Predictive Check
+
+**What:** Before fitting any model, verify that the chosen priors produce plausible
+F1 race outcomes via ancestral sampling. This is a precondition for trusting that
+`sigma_s = 1.0` and `sigma_c = 1.0` are sensible weakly-informative priors, not
+accidentally degenerate ones.
+
+**Procedure:**
+1. Sample 10 sets of prior parameters:
+   ```python
+   s = torch.randn(10, D)          # D = 20 representative drivers
+   c_raw = torch.randn(10, K-1)    # K = 10 representative constructors
+   c = torch.cat([c_raw, -c_raw.sum(-1, keepdim=True)], dim=-1)
+   ```
+2. For each sample, construct performances for a 20-driver race:
+   `p = s[draw, driver_idx] + c[draw, cons_idx]`
+3. Draw a synthetic finishing order by sampling from `PlackettLuce(softmax(p))`
+4. Record: what fraction of races does the prior-fastest driver win across all 10 draws?
+5. Record: what is the typical performance gap between P1 and P20 (top minus bottom)?
+
+**Expected range:**
+- Prior-fastest driver wins 30–60% of races. Below 20% → priors too flat (near-random
+  outcomes). Above 80% → priors too sharp (nearly deterministic — prior already
+  "knows" who wins).
+- P1–P20 performance gap: roughly 2–4 units (2× sigma_s + 2× sigma_c at ±1σ).
+
+**If check fails:**
+- Too deterministic (win rate > 80%): reduce `sigma_s` or `sigma_c` to 0.5 and
+  re-run; document the sensitivity in the report.
+- Too random (win rate < 20%): increase to 1.5 and re-run.
+- Document the chosen values and this check in `report_notes.md` §9.
+
+**Output:** A short printed table — mean win rate, P1–P20 gap — logged to stdout.
+No CSV needed. This is a manual sanity check, not a persistent artifact.
+
+**Lives in:** `models/pgm_backend/tests/test_prior_predictive.py` — a single
+pytest function that runs the check and asserts `0.20 <= win_rate <= 0.80`.
+
+**Acceptance criteria:**
+- Prior win rate for the strongest driver is between 20% and 80% across 100 draws
+- P1–P20 performance gap is between 1.0 and 5.0 units
+- Test passes with `python -m pytest models/pgm_backend/tests/test_prior_predictive.py -v`
+
+---
+
 ### Task 3 — Model 1, SVI Path (`model_baseline.py` + `inference.py`)
 
 **What:** Static skill model with proper Plackett-Luce likelihood and sum-to-zero
@@ -129,11 +184,9 @@ class BaselineModel:
    ```
 3. Performance:
    ```python
-   p = s[driver_idx] + c[cons_idx]          # (N_total,)
-   p = p * mech_mask                         # zero driver skill for mechanical DNFs
+   p = s[driver_idx] + c[cons_idx]          # (N_entries,)
    ```
-   Note: `c[cons_idx]` still contributes for mechanical DNFs — only `s[driver_idx]` is masked.
-   Correct implementation: `p = s[driver_idx] * mech_mask + c[cons_idx]`
+   No masking needed — mechanical DNFs are not present in `driver_idx` or `cons_idx`.
 4. Likelihood: `plackett_luce_log_prob(p, race_lengths)` called as a `pyro.factor`
 
 **Guide:** Mean-field — `s` and `c_raw` each get `loc` + `scale` variational params.
@@ -251,7 +304,7 @@ Do the same for constructors (with sum-to-zero applied at each time step).
 
 **Performance equation:**
 ```python
-p = (s[season_idx, driver_idx] * mech_mask
+p = (s[season_idx, driver_idx]
      + c[season_idx, cons_idx]
      + e_circ[circuit_idx]
      + beta_w * wet[race_idx])
@@ -276,7 +329,7 @@ p = (s[season_idx, driver_idx] * mech_mask
 
 **Performance equation (addition to Model 2):**
 ```python
-p = (s[season_idx, driver_idx] * mech_mask
+p = (s[season_idx, driver_idx]
      + c[season_idx, cons_idx]
      + e_circ[circuit_idx]
      + beta_w * wet[race_idx]
@@ -333,7 +386,7 @@ def extract_posterior(model_name: str, param_store, maps: dict) -> pd.DataFrame:
 
 | Phase | Tasks | Gate |
 |---|---|---|
-| **Phase 1 — Foundation** | 1, 2 | Data + likelihood both verified independently |
+| **Phase 1 — Foundation** | 1, 2, 2b | Data + likelihood verified; priors confirmed plausible |
 | **Phase 2 — Baseline** | 3, 4, 5 | CHECKPOINT A + B: Model 1 fully proven |
 | **Phase 3 — Extensions** | 6, 7 | CHECKPOINT C: Models 2 & 3 sane |
 | **Phase 4 — Polish** | 8 | Full pipeline end-to-end |

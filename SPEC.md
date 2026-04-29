@@ -63,8 +63,8 @@ Extends Model 1 with temporal dynamics, circuit effects, and a global weather te
 
 | Variable | Shape | Description |
 |---|---|---|
-| `s_{d,t}` | `(D, T)` | Driver skill per season (AR(1) random walk) |
-| `c_{k,t}` | `(K, T)` | Constructor performance per season (AR(1)) |
+| `s_{d,t}` | `(T, D)` | Driver skill per season (AR(1) random walk) |
+| `c_{k,t}` | `(T, K)` | Constructor performance per season (AR(1)) |
 | `e_circ` | `(C,)` | Circuit-specific latent effect |
 | `beta_w` | scalar | Global wet-weather performance coefficient |
 
@@ -254,19 +254,31 @@ CONSTRUCTOR_REMAP = {
 
 ### 4.5 Index Tensors
 
+Mechanical DNF filtering happens **inside the preprocessor**, not inside the model.
+`N_entries` refers only to finishers and driver-fault DNFs. Models 1 & 2 never see
+a mechanical DNF row.
+
 The preprocessing module must produce:
 
 ```python
+# Models 1, 2, and 3 — ranking entries only (NO mechanical DNFs)
 driver_idx    # LongTensor (N_entries,)  → index into s_d
 cons_idx      # LongTensor (N_entries,)  → index into c_k
 season_idx    # LongTensor (N_entries,)  → 0-based season index
 circuit_idx   # LongTensor (N_entries,)  → index into e_circ
 race_idx      # LongTensor (N_entries,)  → which race (for grouping entries into races)
-pit_time      # FloatTensor (N_entries,) → normalised pit-stop duration
+pit_norm      # FloatTensor (N_entries,) → normalised pit-stop duration
 wet           # FloatTensor (N_races,)   → binary wet indicator per race
-mech_mask     # FloatTensor (N_entries,) → 1.0=normal, 0.0=mechanical DNF
 race_order    # List[LongTensor]         → for each race r, indices of entries in finishing order
+race_lengths  # LongTensor (N_races,)   → number of ranking entries per race
+
+# Model 3 only — over ALL original rows (N_all > N_entries)
+is_mech       # BoolTensor (N_all,)     → True if mechanical DNF (feeds Bernoulli reliability term)
+cons_idx_all  # LongTensor (N_all,)     → constructor index for all original rows
 ```
+
+`is_mech` and the ranking entries are mutually exclusive — no row appears in both.
+`mech_mask` does not exist; there is no mask to apply inside any model.
 
 **Run a shape assertion after building each tensor.** Silent shape bugs are the most
 common failure mode.

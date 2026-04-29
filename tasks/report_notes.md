@@ -324,19 +324,108 @@ confidence that SVI results on Models 2 & 3 are interpretable.
 - `γ_c = 0.5`: constructor performance can shift more per season (regulation changes
   are larger shocks than individual driver development).
 
-**Noise:**
-- `β = 0.5`: performance noise within a race. This controls how often upsets occur —
-  lower β means the faster car wins almost always; higher β means outcomes are
-  noisier. 0.5 was chosen to allow occasional upsets (as in real F1) while still
-  making skill the dominant predictor.
-
 **For the report:** All priors are weakly informative by design. Sensitivity analysis
 (running the model with σ_s ∈ {0.5, 1.0, 2.0}) would strengthen the conclusions
 but is left as an extension.
 
 ---
 
-## 10. Model Progression Narrative
+## 10. eps, beta, and the TrueSkill Connection
+
+**Decision:** Drop `eps` from the generative process. The correct generative process is:
+
+```
+p_{d,r} = s_d + c_{k(d,r)}
+y_{d,r} ~ PlackettLuce(softmax(p_{d,r}))
+```
+
+**Why sampling eps explicitly is wrong:**  
+Adding a per-(driver, race) noise term `eps_{d,r} ~ Normal(0, β²)` as an explicit
+latent variable introduces ~6,000 unidentified parameters. Given only the finishing
+order, `s_d` and `eps_{d,r}` are perfectly collinear in their effect on the likelihood —
+the posterior over `s_d` would collapse toward its prior while `eps` absorbs all signal.
+This is a genuine identifiability bug.
+
+**What eps actually does in the original TrueSkill:**  
+In TrueSkill, the per-match performance draw `p_{d,r} ~ Normal(s_d + c_k, β²)` is
+integrated out analytically via EP message passing. Beta controls the upset probability —
+how often a weaker driver beats a stronger one due to race-day randomness. It never
+appears as an explicit sample site in TrueSkill either. Dividing Plackett-Luce scores
+by β before the softmax is mathematically equivalent to adding Normal(0, β²) noise and
+marginalising (under a Gumbel noise assumption). The two formulations are the same model
+written differently.
+
+**Why beta as a fixed hyperparameter does nothing:**  
+If β is hardcoded and not learned, it is just a global scale on all performance scores.
+Since `s_d` and `c_k` are already unidentified up to scale (only their differences are
+identified by the likelihood), a fixed β is redundant.
+
+**For the report (methods section):**  
+> "Race-day performance variance is implicitly captured by the Plackett-Luce stochasticity.
+> A temperature parameter β could be introduced as a learnable scale on performances,
+> equivalent to the additive Gaussian noise term in the original TrueSkill formulation —
+> we fix β = 1 and leave joint estimation as a future extension."
+
+---
+
+## 11. Pit-Stop Time: Operational Execution Covariate
+
+**Decision:** Pit-stop time (`π_{d,r}`) in Model 3 is described as an **operational
+execution covariate**, not a driver variable or a shared variable.
+
+**Framing:**  
+Conditioning on pit-stop time allows `c_k` to be interpreted as pure constructor *pace*.
+Operational execution — the speed and reliability of the pit crew — is separated from
+the raw pace advantage of the car. This is a deliberate decomposition.
+
+**Why this is defensible despite the mediator risk:**  
+Pit-stop time does sit on a partial causal path:
+
+```
+Constructor quality ──► pit crew execution ──► race result
+Constructor quality ──► car pace ──────────► race result
+```
+
+By conditioning on pit-stop time, the model attributes the execution pathway to a
+separate coefficient (`β_π`) and lets `c_k` reflect only the pace pathway. This is
+a valid decomposition *if* pit-stop execution and car pace are imperfectly correlated —
+i.e. if some teams are fast but sloppy, or slow but precise. If they were perfectly
+correlated, the separation would be ill-conditioned.
+
+**Limitation to flag in the report discussion:**  
+Dominant teams like Mercedes historically excelled at *both* pit-stop execution and
+raw pace. Over 2014–2021, the two dimensions were strongly positively correlated across
+the field. This collinearity limits how cleanly `c_k` and `β_π` can be separated for
+those teams. The discussion should note this explicitly: the pace/execution decomposition
+is most informative for teams with mismatches between the two dimensions.
+
+---
+
+## 12. Circuit Effects and Weather Confounding
+
+**Limitation to flag in the report discussion:**  
+Model 2 introduces a per-circuit latent effect `e_circ` and a global wet-weather
+coefficient `β_w`. These two terms can partially confound at circuits with a
+consistent wet-weather history. Spa-Francorchamps is the clearest example: it is
+both one of the most technically demanding circuits on the calendar and one of the
+wettest. A large negative `e_circ[spa]` could reflect genuine circuit difficulty,
+persistent wet conditions, or both — the model cannot separate them without
+additional structure.
+
+This is not a correctness problem (the model converges), but it affects
+interpretation: `β_w` is identified primarily from variance *across* races with
+different weather, but if wet races cluster at specific circuits, some of that
+signal gets absorbed by `e_circ`.
+
+**Report sentence:**  
+> "Circuit effects and global weather effects may partially confound at circuits
+> with a consistent wet-weather history (e.g. Spa-Francorchamps). A
+> circuit-specific wet-weather interaction term would fully disentangle them but
+> is left as a future extension."
+
+---
+
+## 13. Model Progression Narrative
 
 The three models form a deliberate complexity ladder for the report:
 
