@@ -1,243 +1,182 @@
-# MBML-TrueSkill-Formula-1
+# F1 Driver-Constructor Skill Separation — Bayesian PGM
 
-Bayesian probabilistic modelling of Formula 1 driver and constructor skill
-(2011–2024).  Built with `trueskill`, `pyro`, `pandas`, and `torch`.
+Probabilistic graphical model for inferring latent F1 driver skill and constructor
+performance from race finishing orders (2011–2024). Built with Pyro, PyTorch, and Pandas.
 
 ---
 
 ## Project Overview
 
-This project implements a full model‑based machine learning pipeline:
+This project decomposes F1 race results into two separate latent dimensions:
 
-1. **Data preprocessing** — merges, cleans, and transforms 14 Kaggle CSV files
-   into a modelling‑ready DataFrame.
-2. **Baseline TrueSkill model** — online Bayesian rating system from Microsoft
-   Research, treating each F1 entry as a two‑player team [driver, constructor].
-3. **Exploratory data analysis** — 16 publication‑quality visualisations
-   covering drivers, constructors, circuits, race dynamics, and skill
-   trajectories.
-4. **Model evaluation** — chronological cross‑validation across 5 competing
-   models (TrueSkill, Grid, Elo, PreviousSeason, Random) with 7 predictive
-   metrics.
-5. **Weather data enrichment** — fetches historical weather from the free
-   Open‑Meteo API for all 286 races (no API key required).
-6. **Pyro Bayesian model** — pairwise‑ranking SVI model with grid‑position
-   covariates and weather‑dependent noise, outperforming both TrueSkill and the
-   Grid baseline.
+- **Driver skill** `s_d` — how much of a result is the driver (independent of the car)
+- **Constructor performance** `c_k` — how much is the car (independent of the driver)
 
-All models are evaluated head‑to‑head on the same chronological test folds.
+Because every result is the product of both, **skill separation** relies on two signals:
+teammates getting different results in the same car, and drivers switching teams
+across seasons.
+
+Three models of increasing complexity share the same likelihood (Plackett-Luce
+ranking) and the same identifiability constraint (sum-to-zero on constructors):
+
+| Model | Latent Structure | Covariates |
+|-------|-----------------|------------|
+| **Baseline** | Static driver + constructor skills | None |
+| **Extended** | AR(1) temporal skills + circuit effects | Global weather |
+| **Full** | AR(1) temporal skills + circuit effects | Weather, pit stops, DNF reliability, wet-weather driver interactions |
 
 ---
 
 ## Project Structure
 
 ```
-├── pyproject.toml                       # Dependencies (uv)
-├── main.py                              # Placeholder entry point
+├── pyproject.toml                     # Dependencies (uv)
+├── SPEC.md                            # Full model specification
+├── CLAUDE.md                          # Project rulebook (read-only)
 │
-├── data_preprocessing/                  # Stage 1 — clean dataset
-│   ├── build_f1_model_data.py           # Merge 6 CSVs, handle \N, filter 2011+, aggregate pit stops
-│   ├── read_columns.py                  # Quick column inspector (nrows=0)
-│   ├── f1_model_ready.csv               # 5,980 rows × 13 columns
-│   └── f1_enriched.csv                  # +13 weather/engineered columns (26 total)
+├── data_preprocessing/                # Shared data pipeline
+│   ├── build_f1_model_data.py         # Build clean dataset from raw CSVs
+│   ├── f1_model_ready.csv             # Clean dataset (5,980 rows)
+│   └── f1_enriched.csv                # + weather/engineered features
 │
-├── models/                              # Stage 2 — skill‑rating models
-│   ├── f1_trueskill_baseline.py         # TrueSkill: online EP, driver+constructor teams, 286 races
-│   └── pyro_backend/                    # Phase B — Pyro Bayesian model
-│       ├── run_pyro_model.py            # Orchestrator: train + export + compare
-│       ├── pyro_model.py                # Pairwise ranking model + SVI guide (static + temporal)
-│       ├── pyro_evaluator.py            # PyroSkillPredictor — plugs into evaluation CV
-│       └── data_preparation.py          # Converts 5,980 entries → 59,839 pairwise training examples
+├── models/pgm_backend/                # PGM implementation
+│   ├── data_preparation.py            # Load + encode data as tensors
+│   ├── likelihood.py                  # Plackett-Luce log-probability
+│   ├── model_baseline.py              # Model 1 — static skills
+│   ├── model_extended.py              # Model 2 — temporal + weather
+│   ├── model_full.py                  # Model 3 — reliability + interactions
+│   ├── inference.py                   # SVI training + NUTS (Model 1 only)
+│   ├── posterior.py                   # Posterior extraction
+│   ├── run_pgm.py                     # Orchestrator: train all, export CSVs + plots
+│   └── tests/                         # Unit tests + synthetic recovery
 │
-├── exploration/                         # Stage 3 — EDA & visualisation
-│   ├── f1_data_exploration.py           # Orchestrator: 16 analyses + figures
-│   ├── analysis.py                      # 20 statistical computation functions
-│   └── visualisations.py               # 16 seaborn/matplotlib plotting functions
+├── outputs/pgm_model/                 # Generated results
+│   ├── baseline_posterior.csv         # Model 1 posterior estimates
+│   ├── extended_posterior.csv         # Model 2 posterior estimates
+│   ├── full_posterior.csv             # Model 3 posterior estimates
+│   ├── nuts_vs_svi_comparison.csv     # NUTS validation (Model 1)
+│   └── plots/                         # 10 diagnostic + results plots
 │
-├── evaluation/                          # Phase A — model validation
-│   ├── run_evaluation.py                # Orchestrator: 10‑fold chronological CV
-│   ├── metrics.py                       # 7 prediction metrics (pairwise acc, Spearman, MRR, MSE, …)
-│   ├── baselines.py                     # 5 SkillPredictor classes (Grid, Elo, PrevSeason, Random, TrueSkill)
-│   ├── validator.py                     # ChronologicalValidator — train/test split by season
-│   └── reporter.py                      # 8 comparison figures + Markdown report
+├── tasks/                             # Implementation planning
+│   ├── todo.md                        # Master task checklist
+│   ├── plan.md                        # Detailed implementation spec
+│   └── report_notes.md                # Design decisions for report
 │
-├── data_enrichment/                     # Phase C — weather integration
-│   ├── run_enrichment.py                # Orchestrator: fetch → merge → engineer
-│   ├── fetch_weather.py                 # Open‑Meteo API client with CSV caching
-│   ├── enrich_features.py               # Merge + 7 engineered weather features
-│   └── weather_cache.csv                # 286 rows × 9 columns (cached API responses)
-│
-├── outputs/                             # All generated outputs
-│   ├── ratings/                         # TrueSkill final ratings
-│   │   ├── driver_ratings.csv
-│   │   └── constructor_ratings.csv
-│   ├── history/                         # TrueSkill per‑race snapshots
-│   │   └── driver_rating_history.csv    # 15,921 rows
-│   ├── exploration/figures/             # 16 EDA figures (.png)
-│   ├── evaluation/                      # CV metrics + comparison figures
-│   └── pyro_model/                      # Pyro posteriors + comparison metrics
-│
-├── prompts/                             # Task specifications
-│   ├── prompt_01.md                     # Data preprocessing requirements
-│   └── prompt_02.md                     # TrueSkill model requirements
-│
-└── data/                                # Raw Kaggle F1 dataset (14 CSVs, not tracked in git)
+├── F1_PGM_Evaluation.ipynb            # Results notebook
+├── archive/                           # Old prototype (TrueSkill + pairwise probit)
+└── data/                              # Raw Kaggle F1 dataset (not tracked)
 ```
 
 ---
 
 ## Quick Start
 
-### Prerequisites
-
-- Python ≥ 3.13
-- [uv](https://docs.astral.sh/uv/) package manager
+**Prerequisites:** Python >= 3.13, [uv](https://docs.astral.sh/uv/)
 
 ```bash
-# Clone and set up
 git clone <repo-url>
 cd MBML-TrueSkill-Formula-1
 uv sync
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 ```
 
-### Pipeline (in order)
+### Run the pipeline
 
 ```bash
 # 1. Build the clean dataset
 python data_preprocessing/build_f1_model_data.py
-# → data_preprocessing/f1_model_ready.csv
 
-# 2. Run the TrueSkill baseline model
-python -m models.f1_trueskill_baseline
-# → outputs/ratings/ + outputs/history/
+# 2. Run the full PGM pipeline (all 3 models)
+uv run python -m models.pgm_backend.run_pgm
+# → outputs/pgm_model/ (CSVs + 10 plots)
 
-# 3. Explore the data
-python -m exploration.f1_data_exploration
-# → outputs/exploration/figures/ (16 plots)
-
-# 4. Evaluate all models
-python -m evaluation.run_evaluation
-# → outputs/evaluation/ (metrics + comparison figures)
-
-# 5. Fetch weather data (first run: ~5 min; cached thereafter)
-python -m data_enrichment.run_enrichment
-# → data_preprocessing/f1_enriched.csv
-
-# 6. Run the Pyro Bayesian model
-python -m models.pyro_backend.run_pyro_model
-# → outputs/pyro_model/ (posteriors + comparison)
+# 3. Run tests
+uv run python -m pytest models/pgm_backend/tests/ -v
 ```
 
----
+Training takes ~5 minutes on CPU. All models use SVI (stochastic variational
+inference). Model 1 also supports NUTS (Hamiltonian Monte Carlo) for validation.
 
-## Mathematical Foundation
+### Explore results
 
-The project implements two Bayesian approaches to the F1 skill‑rating problem.
-
-### TrueSkill (Online Expectation Propagation)
-
-Each driver and constructor has a latent skill $\theta \sim \mathcal{N}(\mu, \sigma^2)$.
-For a race with $N$ competitors, the forward model is:
-
-$$t_j = \theta_{\text{driver}(j)} + \theta_{\text{constructor}(j)} + \varepsilon_j, \qquad \varepsilon_j \sim \mathcal{N}(0, \beta^2)$$
-
-The observed ranking constrains $t_1 > t_2 > \dots > t_N$.  The joint posterior
-$p(\boldsymbol{\theta} \mid \text{ranks})$ is intractable for $N \geq 3$, so
-TrueSkill approximates it via Expectation Propagation (moment‑matching on the
-factor graph).  Between races, skills drift via $\theta_{t+1} \sim \mathcal{N}(\theta_t, \tau^2)$.
-
-**Key parameters:** μ₀ = 25, σ₀ = 25/3 ≈ 8.33, β = 25/6 ≈ 4.17, τ = 25/300 ≈ 0.083.
-
-See `models/README.md` for the full mathematical exposition including worked
-examples, the EP factor graph, and citations.
-
-### Pyro SVI (Pairwise‑Ranking with Covariates)
-
-The Pyro model reframes the problem as batch inference on all pairwise
-comparisons.  For every ordered pair $(i, j)$ where $i$ finished ahead of $j$
-in a race:
-
-$$\mathbb{P}(i \succ j) = \Phi\!\left(
-    \frac{s_i - s_j + \beta_g (g_i - g_j)}{\sqrt{2}\,\beta_{\text{perf}}}
-\right)$$
-
-where $s_i = \theta_{\text{driver}(i)} + \theta_{\text{constructor}(i)}$,
-$g_i$ is the normalised grid position, and $\Phi$ is the standard Normal CDF.
-
-Inference uses Stochastic Variational Inference (SVI) with a mean‑field
-Gaussian guide.  The static variant learns 100 latent parameters from 59,839
-pairwise observations in ~12 seconds.  A temporal variant with per‑season
-random‑walk skills (1,400+ parameters) is implemented but computationally heavy.
+Open `F1_PGM_Evaluation.ipynb` in Jupyter for posterior summaries, driver rankings,
+and cross-model comparisons.
 
 ---
 
-## Key Results
+## Model Architecture
 
-### Model Comparison (10‑fold Chronological CV, 2015–2024)
+All three models use the **Plackett-Luce likelihood** — the exact probability
+of an observed race ordering under latent performance scores:
 
-| Model | Pairwise Acc | Top‑1 Win | Spearman ρ | MSE ↓ |
-|-------|:-----------:|:---------:|:----------:|:-----:|
-| **Pyro (SVI)** | **0.755** | **0.475** | **0.640** | **24.3** |
-| Grid | 0.730 | 0.422 | 0.569 | 29.1 |
-| Elo | 0.678 | 0.389 | 0.496 | 34.2 |
-| PrevSeason | 0.669 | 0.543 | 0.517 | 31.5 |
-| TrueSkill | 0.659 | 0.389 | 0.455 | 36.8 |
-| Random | 0.506 | 0.032 | 0.012 | 66.9 |
+$$P(\pi \mid p) = \prod_{i=1}^{N} \frac{\exp(p_{\pi(i)})}{\sum_{j \geq i} \exp(p_{\pi(j)})}$$
 
-**Takeaways:**
+where the latent performance of driver $d$ in constructor $k$ is
+$p_{d,k} = s_d + c_k$ (plus optional covariates).
 
-- **Pyro is the only model to beat the Grid baseline** — the grid‑position
-  covariate ($\beta_g = -3.55$) strongly modulates predictions.
-- TrueSkill's strength is not in point predictions alone, but in providing
-  **full posterior uncertainties** ($\mu, \sigma$) for risk estimation.
-- Grid position is the single strongest predictor of race outcome in F1,
-  explaining why all models that ignore it underperform.
-- The pairwise‑ranking SVI approach achieves better predictive accuracy than
-  TrueSkill's online EP on this dataset.
+**Identifiability** is enforced via a sum-to-zero reparameterisation on
+constructor skills: $c_{\text{raw}}$ has shape $(K{-}1)$, and
+$c = [c_{\text{raw}},\; -\Sigma\,c_{\text{raw}}]$ ensures $\sum_k c_k = 0$.
 
-### Data Summary (2011–2024)
+Mechanical DNFs (engine failures, collisions) are excluded from the ranking
+likelihood in Models 1–2. Model 3 adds a Bernoulli reliability term.
 
-| Metric | Value |
-|--------|-------|
-| Races | 286 |
-| Unique drivers | 77 |
-| Unique constructors | 23 |
-| Winningest driver | Lewis Hamilton (91 wins) |
-| Winningest constructor | Mercedes (120 wins) |
-| DNF rate | 17.1% |
-| Avg pit stops/race | 1.90 |
-| Wet races | 50% (143/286) |
-| Very wet races | 14% (41/286) |
+### Model 1 — Baseline (Static)
+
+- Static driver skills $s_d \sim \mathcal{N}(0, \sigma_s^2)$
+- Static constructor performance $c_k$ with sum-to-zero
+- Plackett-Luce likelihood, no covariates
+- Inference: SVI + NUTS validation
+
+### Model 2 — Extended (Temporal + Weather)
+
+- AR(1) temporal skills: $s_{d,y}$ evolves across seasons
+- Vectorised cumsum of per-year innovations (no recursive loops)
+- Circuit random effects: $u_{\text{circuit}} \sim \mathcal{N}(0, \sigma_u^2)$
+- Global weather coefficient: wet races shift all performance scores
+- Inference: SVI only
+
+### Model 3 — Full
+
+- Everything in Model 2, plus:
+- Wet-weather driver interactions $\delta_d$ — some drivers excel in rain
+- Pit-stop normalised count $\beta_\pi$ — more stops = worse finishing position
+- Bernoulli reliability term for driver-fault DNFs
+- Inference: SVI only
 
 ---
 
-## Running Individual Modules
+## Key Findings
 
-Each module has its own README with detailed documentation:
+- **Driver vs constructor separation works.** Hamilton and Verstappen rank top
+  in driver skill; Mercedes and Red Bull dominate constructor performance with
+  distinct temporal trajectories peaking in their respective eras.
+- **Wet-weather specialists emerge naturally.** The $\delta_d$ parameter
+  identifies drivers who outperform their baseline skill in rain — 5 of the
+  top 6 are Formula 1 world champions.
+- **NUTS validates SVI.** R-hat < 1.05 for all parameters in Model 1,
+  confirming SVI variational posteriors are well-calibrated.
+- **Constructor sum-to-zero is critical.** Without it, driver and constructor
+  skills trade off and become unidentifiable.
 
-| Module | Command | Description |
-|--------|---------|-------------|
-| Data prep | `python data_preprocessing/build_f1_model_data.py` | Build clean CSV from raw data |
-| TrueSkill | `python -m models.f1_trueskill_baseline` | Train TrueSkill, export ratings |
-| Exploration | `python -m exploration.f1_data_exploration` | 16 EDA figures |
-| Evaluation | `python -m evaluation.run_evaluation` | 10‑fold CV, all models |
-| Weather | `python -m data_enrichment.run_enrichment` | Fetch + merge weather |
-| Pyro model | `python -m models.pyro_backend.run_pyro_model` | Train Pyro, compare |
+See `outputs/pgm_model/plots/` and `F1_PGM_Evaluation.ipynb` for all results.
 
-All commands should be run from the project root with the `.venv` activated
-(`source .venv/bin/activate` on macOS/Linux, `.venv\Scripts\activate` on Windows).
+---
+
+## Old Prototype
+
+The original pipeline (TrueSkill baseline + pairwise probit Pyro model + EDA +
+evaluation + weather enrichment) was moved to `archive/`. See that directory
+for the earlier work. The archive preserves the full git history of those files.
 
 ---
 
 ## Dependencies
 
 ```
-numpy, pandas          — data handling
-trueskill              — baseline Bayesian rating
-pyro-ppl, torch        — Pyro Bayesian model + SVI
-matplotlib, seaborn    — visualisation
-requests               — weather API calls
+numpy, pandas         — data handling
+pyro-ppl, torch       — PGM inference (SVI + NUTS)
+matplotlib, seaborn   — visualisation
 ```
 
 Managed by [uv](https://docs.astral.sh/uv/) via `pyproject.toml`.
@@ -247,5 +186,5 @@ Managed by [uv](https://docs.astral.sh/uv/) via `pyproject.toml`.
 ## License
 
 This project uses the [Kaggle Formula 1 dataset](https://www.kaggle.com/datasets/rohanrao/formula-1-world-championship-1950-2020)
-(via Ergast API).  Weather data is from [Open‑Meteo](https://open-meteo.com/)
+(via Ergast API). Weather data is from [Open-Meteo](https://open-meteo.com/)
 (free, no API key).
