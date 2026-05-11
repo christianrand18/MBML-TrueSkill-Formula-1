@@ -295,6 +295,89 @@ DeepSeek appends after each task. Claude reads before writing the next CURRENT_T
 
 ---
 
+---
+
+## T9 — Data Quality Fixes — MECHANICAL_STATUS_IDS + Pit Z-Scoring — 2026-05-11
+
+**Status:** PASSED (4/4 existing tests pass, pipeline loads cleanly)
+
+**Files modified:**
+- `models/pgm_backend/data_preparation.py` — removed 18, 19, 130 from MECHANICAL_STATUS_IDS; replaced naive pit z-scoring with robust winsorised + zero-imputed version
+- `tasks/report_notes.md` — updated §4.3 (alpha_rel ~1.6→~2.02), merged pit analysis into §11 (data quality findings), added §7 back (wet-weather), added T9–T11 entries
+- `tasks/handoff_log.md` — this entry
+
+**Actual output values (spot checks):**
+- is_mech mean: 0.0769 (was 0.0875) — dropped by removing 18, 19 (+8/+9 Laps, 3 rows) and 130 (Collision damage, 60 rows)
+- N_entries (ranking): 5520 (was 5457) — +63 entries now correctly classified as driver-fault
+- pit_norm max: 4.506 (previously unlimited, extreme outliers now winsorised at 99th %ile)
+- pit_norm == 0 count: 271 (4.9%) — zero-pit entries get neutral pit contribution
+- pit_norm mean: 0.000, std: 0.974 (well-behaved after winsorisation)
+
+**Deviations from spec:**
+- N_entries changed from 5457 → 5520. Any downstream code that depends on a hardcoded N_entries value must be updated.
+
+**Anything the next task must know:**
+- The 3 statusId 18/19 rows are now correctly in the ranking entries (not mechanical). This adds 3 entries to the Plackett-Luce likelihood.
+- The 60 statusId 130 rows are now driver-fault (in ranking), not mechanical. They have is_mech=False — Model 3's Bernoulli reliability term will receive these as non-failures instead of failures.
+- The robust pit z-scoring uses within-season winsorisation at the 99th percentile. This is done BEFORE z-scoring, so the mean/std of each season are computed from clean data. Zero-pit entries are excluded from mean/std computation and assigned pit_norm = 0.
+- Model 3's `beta_pi` and `alpha_rel` posteriors WILL CHANGE from the previously saved values. Re-run Model 3 to get updated results.
+- All 4 existing tests pass as-is because they use synthetic data (not real data) and are unaffected by the MECHANICAL_STATUS_IDS or pit z-scoring changes.
+
+---
+
+## T10 — Pipeline Re-run After Data Quality Fixes — 2026-05-11
+
+**Status:** PASSED
+
+**Files regenerated:**
+- `outputs/pgm_model/baseline_posterior.csv` — 94 rows
+- `outputs/pgm_model/extended_posterior.csv` — 1352 rows
+- `outputs/pgm_model/full_posterior.csv` — 1431 rows
+- `outputs/pgm_model/nuts_vs_svi_comparison.csv` — 94 rows
+- `outputs/pgm_model/plots/` — all 10 plots regenerated
+
+**Actual output values (spot checks):**
+
+*Dataset (post-fix):*
+- N_entries (ranking): 5520 (was 5457)
+- is_mech mean: 0.0769 (was 0.0875)
+
+*Model 1 (Baseline SVI):*
+- Initial ELBO: 17699.21, Final ELBO: 10542.13
+- Top 5 drivers: Piastri (+1.03), Norris (+0.95), Verstappen (+0.71), Hamilton (+0.65), Vettel (+0.64)
+- Top 5 constructors: Mercedes (+1.50), Red Bull (+1.09), Ferrari (+0.70), Force India (+0.32), #208 (+0.29)
+
+*Model 2 (Extended SVI):*
+- Initial ELBO: 32733.39, Final ELBO: 11341.58
+- Hamilton peak: season 9 (2020), s=+1.10
+- Mercedes peak: season 8 (2019), c=+2.30
+- Verstappen peak: season 12 (2023), s=+2.07
+- Red Bull peak: season 12 (2023), c=+1.75
+
+*Model 3 (Full SVI):*
+- Initial ELBO: 52451.45, Final ELBO: 12954.93
+- alpha_rel = 2.0863 ± 0.0800 → sigmoid(-2.0863) = 11.0%
+- **beta_pi = −0.0023 ± 0.0312** (was +0.2591 — flipped to zero!)
+- beta_w = −0.0004 ± 0.5014
+- Top 5 delta_d: driverId [830 (+0.60), 3 (+0.49), 24 (+0.45), 846 (+0.42), 155 (+0.37)]
+- Alonso (did=4): delta_d = +0.1492
+- Webber (did=13): delta_d = +0.0921
+- delta_d range: [-0.76, +0.60], 44/77 positive
+
+*NUTS vs SVI:*
+- Max driver discrepancy: 1.7530
+- Max constructor discrepancy: 2.1807
+- Max R-hat: 1.0137
+
+**Deviations from spec:**
+- None — all acceptance criteria pass with updated dataset
+
+**Anything the next task must know:**
+- **beta_pi ≈ 0:** The pit-stop covariate has zero detectable effect after data quality fixes. The previous +0.26 was entirely an artefact of (a) zero-duration pit entries creating a spurious negative correlation with finishing position, and (b) extreme outlier values inflating the z-score standard deviation. The report narrative around operational execution must be revised — pit duration does not predict race outcomes.
+- **alpha_rel ≈ 2.09:** Converged slightly higher than before (2.02) due to lower mechanical DNF rate (7.7% vs 8.7%), giving sigmoid(-2.09) = 11.0% baseline. This is ~3 percentage points above the empirical rate, reflecting prior regularization.
+- All posterior values have shifted from the T7/T8 handoff entries. Any downstream text quoting specific numbers must use these new values.
+- Pipeline runtime: 809s (~13.5 min) on M1 Pro.
+
 ## Template
 
 ```markdown

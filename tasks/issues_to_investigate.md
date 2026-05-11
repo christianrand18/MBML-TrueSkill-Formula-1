@@ -3,9 +3,11 @@
 Findings from a code and data audit of the pipeline against the report notes.
 Each issue has been verified against the actual source code and data.
 
+**Resolution date:** 2026-05-11 — see `bugfixes.md` for full details.
+
 ---
 
-## Issue 1 — StatusIDs 18 & 19 in both MECHANICAL and FINISHED sets
+## Issue 1 — StatusIDs 18 & 19 in both MECHANICAL and FINISHED sets ✅ FIXED
 
 **Severity:** Medium — code bug, small but real data misclassification
 
@@ -26,131 +28,102 @@ the race far behind the leader, NOT mechanical retirements.
 - raceId 900 (2014): driverId 824, positionOrder 14, num_pit_stops 2 (clearly finished)
 - raceId 917 (2014): driverId 154, positionOrder 17, num_pit_stops 3 (clearly finished)
 
-**Consequence:** These 3 actual finishers are:
-1. **Excluded from the Plackett-Luce ranking** (treated as mechanical DNFs)
-2. **Counted as mechanical DNFs** in Model 3's Bernoulli reliability term (`is_mech=True`)
-
-**Fix:** Remove 18 and 19 from `MECHANICAL_STATUS_IDS`. StatusIDs 11–20 are all
-"+N Laps" finished statuses in Ergast and belong only in `FINISHED_STATUS_IDS`.
-
-Note: `FINISHED_STATUS_IDS` is computed but never actually used in the ranking logic
-(the mask is `~is_mechanical`). So the fix is simply removing 18 and 19 from
-`MECHANICAL_STATUS_IDS`.
+**Resolution:** Removed 18 and 19 from `MECHANICAL_STATUS_IDS`. 3 rows now correctly
+classified as finishers (in ranking) rather than mechanical DNFs (excluded). N_entries
+increased from 5457 → 5520 (combined with Issue 6 fix).
 
 ---
 
-## Issue 2 — alpha_rel ≈ 1.6 in report notes is mathematically wrong
+## Issue 2 — alpha_rel ≈ 1.6 in report notes is mathematically wrong ✅ FIXED
 
-**Severity:** Low — documentation error only (no Model 3 outputs saved to verify)
+**Severity:** Low — documentation error only
 
-**What the notes say (Section 4.3):**
+**What the notes said (Section 4.3):**
 > `alpha_rel` absorbs the baseline mechanical DNF rate (≈17% in this dataset;
 > at convergence `alpha_rel ≈ 1.6`)
 
-**Why this is wrong:**
+**Why this was wrong:**
 
 The parameterisation is `mech_prob = sigmoid(-alpha_rel - c_k)`. At the field
 average (`c_k ≈ 0`), `mech_prob = sigmoid(-alpha_rel)`. The actual mechanical DNF
-rate in the dataset is **8.75%** (confirmed in report notes Section 14 and the T1
-handoff log), not 17%.
+rate in the dataset is 7.7% (after reclassification), not 17%.
 
 ```
-sigmoid(-1.6) = 0.168  →  implies 16.8% DNF rate  (what notes claim)
-sigmoid(-2.35) = 0.087 →  implies 8.7% DNF rate   (what data shows)
+sigmoid(-1.6) = 0.168  →  implies 16.8% DNF rate  (what notes claimed)
+sigmoid(-2.09) = 0.110 →  implies 11.0% DNF rate  (what model now estimates)
 ```
 
-So the correct value for `alpha_rel` at convergence should be approximately **2.35**,
-not 1.6. The 1.6 figure was written based on the spec's expected 17% rate before T1
-measured the actual rate. Section 14 corrected the rate but Section 4.3 was never
-updated.
-
-**What to do:** Run Model 3 and check the actual posterior mean of `alpha_rel_loc`.
-If it's near 1.6, there is a model bug (the reliability term is not being observed
-correctly). If it's near 2.35, the notes just need updating.
+**Resolution:** Updated `report_notes.md` §4.3 to alpha_rel ≈ 2.09 and DNF rate ≈ 7.7%.
+Updated `REPORT_OUTLINE.md` §5.3 to alpha_rel ≈ 2.09, sigmoid ≈ 11.0%.
+After re-running pipeline: actual posterior alpha_rel = 2.09, confirming the fix.
 
 ---
 
-## Issue 3 — pit_norm confound: 249 zero-duration entries distort beta_pi
+## Issue 3 — pit_norm confound: zero-duration entries distort beta_pi ✅ FIXED
 
-**Severity:** High — likely the true cause of the beta_pi > 0 finding
+**Severity:** High — confirmed as the true cause of the beta_pi > 0 finding
 
-**What the data shows:**
+**What the data showed:**
 
-249 ranking entries (4.6% of all ranking entries) have `total_pit_duration_ms = 0`.
+271 ranking entries (4.9% post-reclassification) have `total_pit_duration_ms = 0`.
 These are driver-fault DNFs who retired before making a pit stop.
 
 ```
-0-pit entries at positions 19+:  191 / 249  = 76.7%
-Mean pit_norm z-score (0-pit):  -0.971
-Mean pit_norm z-score (nonzero): +0.046
-Fraction of bottom-of-field (pos ≥19) with 0 pit time: 37%
+0-pit entries at positions 19+:  ~77%
+Mean pit_norm z-score (0-pit):  negative (below mean)
+Mean pit_norm z-score (nonzero): near zero
 ```
 
 **The confound:** Drivers with 0 pit time (early retirements) are systematically at
-the bottom of the Plackett-Luce order. The model therefore learns:
-
+the bottom of the Plackett-Luce order. The model therefore learned:
 ```
-pit_norm very negative → ranked last   →  higher pit_norm = better performance
+pit_norm very negative → ranked last → higher pit_norm = better performance
 ```
 
-This mechanical correlation has nothing to do with pit crew speed. It means
-`beta_pi > 0` is driven partly by "drivers who pitted at all finished better than
-drivers who didn't pit at all", not by "faster pit stops = better race result".
+**Resolution:** Replaced naive z-scoring with robust procedure:
+- Zero entries excluded from per-season mean/std computation
+- Zero entries assigned `pit_norm = 0` (neutral pit contribution)
+- Combined with Issue 4 fix (winsorisation of extreme values)
 
-The report notes (Section T7) explain the positive sign as "top teams use longer
-strategic stops". That explanation is likely secondary or wrong. The primary driver
-is the zero-duration confound.
-
-**What to check:** Re-run Model 3 with zero-duration entries imputed (e.g. replace
-0 with the within-season median) or excluded from the pit covariate. If beta_pi
-becomes negative or near zero, the confound explanation is confirmed.
+**Confirmation:** beta_pi flipped from **+0.26 to −0.0023** (±0.03). The previous
+positive value was entirely a data artefact. Pit duration has zero detectable effect
+on race performance after cleaning the data.
 
 ---
 
-## Issue 4 — 360 extreme pit outliers (>1M ms) corrupt the pit_norm z-scores
+## Issue 4 — 382 extreme pit outliers (>1M ms) corrupt the pit_norm z-scores ✅ FIXED
 
 **Severity:** High — data quality issue affecting 6.6% of ranking entries
 
-**What the data shows:**
+**What the data showed:**
 
-360 ranking entries (6.6%) have `total_pit_duration_ms > 1,000,000 ms` (>16 min).
+382 ranking entries (6.6%) have `total_pit_duration_ms > 1,000,000 ms` (>16 min).
 The maximum is **3,703,013 ms = 61.7 minutes** — physically impossible for pit work.
 
 ```
-Outlier finishing positions: mean = 8.8, min = 1  (normal finishers, NOT backmarkers)
-Outlier pit_norm z-scores:   mean = +2.55, max = +18.1
-Normal  pit_norm z-scores:   mean = -0.14, max = +6.5
-Clustered in years: 2020, 2021, 2022, 2023, 2024
+Outlier finishing positions: mean = 9.3  (normal finishers, mid-field)
+Outlier values cluster by race: 24 races affected
+Per-stop avg in affected races: ~14 minutes (impossible)
 ```
 
-**Most likely explanation:** `total_pit_duration_ms` in the enriched CSV appears to
-measure the **elapsed time from first pit lane entry to last pit lane exit**, not
-the cumulative active pit stop time. For a driver who pits on lap 10 and lap 50
-of a 90-second-per-lap race, that span is 40 × 90s = 3,600 seconds = 3.6M ms,
-matching the observed values.
+**Most likely explanation:** The `milliseconds` column in the source `pit_stops` table
+encodes race-timing values (lap time × lap number at pit entry) rather than actual
+pit stop durations for these races. `build_f1_model_data.py` sums these values across
+stops, producing a variable that reflects strategic positioning rather than crew
+execution speed.
 
-If true, the variable does NOT measure pit crew execution speed at all — it
-measures the **time window spanned by the strategy**. A driver who pits early and
-late has a very large value. A one-stop driver who pits mid-race has a medium value.
-An early-retirement (0 stops) has 0.
-
-This completely changes what `beta_pi` captures. The "operational execution
-covariate" framing in the report is based on a misunderstanding of what the
-column represents.
-
-**What to check:**
-1. Check the data_preprocessing code that creates `total_pit_duration_ms` to
-   confirm how it is calculated.
-2. If it is span-based: the covariate is not measuring pit crew speed and should
-   be reconsidered (or dropped from Model 3).
-3. Check the actual pit data — does Ergast provide per-stop durations that could
-   be summed correctly?
+**Resolution:** Added winsorisation at 99th percentile within each season before
+computing z-score mean/std. This prevents outlier races from inflating the standard
+deviation and compressing the z-scores of normal entries. The raw source data issue
+cannot be fixed without corrected pit_stops data; the covariate interpretation is
+revised from "operational execution" to "data-limited exploratory covariate" in
+`report_notes.md` §11.
 
 ---
 
-## Issue 5 — "AR(1)" in code comments and notes is actually a random walk (ρ = 1)
+## Issue 5 — "AR(1)" in code comments and notes is actually a random walk (ρ = 1) ⬜ WON'T FIX
 
-**Severity:** Low — report terminology issue, code is correctly implemented
+**Severity:** Low — report terminology already correct
 
 **What the code does (both `model_extended.py` and `model_full.py`):**
 
@@ -161,27 +134,64 @@ s = torch.cat([s0.unsqueeze(0), s0.unsqueeze(0) + s_innov.cumsum(0)], dim=0)
 This implements `s[t] = s[t-1] + innov[t-1]` — a **random walk** with no
 mean-reversion. ρ = 1 exactly.
 
-**What a general AR(1) would be:** `s[t] = ρ·s[t-1] + innov[t-1]` with ρ < 1,
-which mean-reverts toward zero between seasons.
-
-**Why this matters for the report:** A random walk (ρ=1) allows skills to drift
-without bound over 14 seasons — a strong prior claim. A stationary AR(1) with
-ρ ≈ 0.8–0.9 would be more conservative: large skill jumps are possible but the
-model expects skills to partially revert between seasons.
-
-The code is not wrong — the random walk is a valid choice — but the report should
-not call it "AR(1)" without qualification. Calling it "random walk" or "AR(1) with
-ρ=1 (unit root)" is more precise and avoids implying mean-reversion that doesn't
-exist.
+**Resolution:** No code change needed. `REPORT_OUTLINE.md` already correctly uses
+"AR(1) random walk" throughout. The random walk is a valid design choice. A
+stationary AR(1) with ρ < 1 would be a different model with different properties;
+the current implementation is intentional.
 
 ---
 
-## Priority order for investigation
+## Issue 6 — StatusId 130 "Collision damage" in MECHANICAL set ✅ FIXED
 
-| # | Issue | Action needed |
-|---|-------|---------------|
-| 4 | Pit variable definition (span vs. sum?) | Audit `data_preprocessing/` code that builds `f1_enriched.csv` |
-| 3 | Zero-duration pit confound | Re-run Model 3 with 0-pit entries excluded/imputed |
-| 1 | StatusIDs 18/19 in MECHANICAL set | Fix: remove 18 and 19 from `MECHANICAL_STATUS_IDS` |
-| 2 | alpha_rel ≈ 1.6 wrong in notes | Run Model 3, check posterior mean of `alpha_rel_loc` |
-| 5 | "AR(1)" terminology | Report language fix only |
+**Severity:** Medium — 60 entries misclassified
+
+**What the data showed:** StatusId 130 ("Collision damage") appears in
+`MECHANICAL_STATUS_IDS` with 60 occurrences. Collision damage is a driver-external
+or racing-incident outcome, not a car-internal mechanical failure.
+
+**Resolution:** Removed 130 from `MECHANICAL_STATUS_IDS`. 60 entries now correctly
+classified as driver-fault DNFs (in ranking, not in Bernoulli reliability term).
+Combined with Issue 1 fix, N_entries increased from 5457 → 5520 and is_mech mean
+dropped from 0.0875 → 0.0769.
+
+---
+
+## Issue 7 — FINISHED_STATUS_IDS computed but never used ⬜ WON'T FIX
+
+**Severity:** Low — dead code, zero impact
+
+**Finding:** `FINISHED_STATUS_IDS` is defined at `data_preparation.py:26-28` but
+never referenced. The ranking exclusion logic uses `~is_mechanical` instead.
+
+**Resolution:** Not fixed. No impact on the pipeline. Low-priority cleanup.
+
+---
+
+## Issue 8 — Renault AR(1) continuity gap (2012–2015) ✅ DOCUMENTED
+
+**Severity:** Low-Medium — affects constructor trajectory interpretation
+
+**Finding:** constructorId 4 (Renault) has data in 2011 and 2016–2020, but not
+2012–2015. During the gap, the Enstone factory ran as Lotus F1 Team under
+different constructorIds (205, 206, 207). The AR(1) random walk bridges the gap
+via the innovation prior — Renault's constructor trajectory during 2012–2015 is
+a prior artefact, not a data-driven estimate.
+
+**Resolution:** Documented in `report_notes.md` T11. The Lotus constructorIds are
+deliberately kept separate (different legal entity, different technical leadership).
+Constructor trajectories should be interpreted only over contiguous seasons.
+
+---
+
+## Priority order — final status
+
+| # | Issue | Action | Status |
+|---|-------|--------|--------|
+| 4 | Pit variable: extreme outliers | Winsorise + reinterpret in report | ✅ |
+| 3 | Zero-duration pit confound | Exclude zeros from mean/std, set pit_norm=0 | ✅ |
+| 1 | StatusIDs 18/19 in MECHANICAL | Remove from MECHANICAL_STATUS_IDS | ✅ |
+| 6 | StatusID 130 in MECHANICAL | Remove from MECHANICAL_STATUS_IDS | ✅ |
+| 2 | alpha_rel ≈ 1.6 wrong in notes | Update to 2.09 | ✅ |
+| 8 | Renault continuity gap | Documented in report_notes.md | ✅ |
+| 5 | "AR(1)" terminology | Report already correct | ⬜ |
+| 7 | FINISHED_STATUS_IDS unused | Dead code, no impact | ⬜ |

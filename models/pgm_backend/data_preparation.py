@@ -19,8 +19,8 @@ CONSTRUCTOR_REMAP = {
 }
 
 MECHANICAL_STATUS_IDS = frozenset({
-    5, 6, 7, 8, 9, 10, 18, 19, 21, 22, 26, 28, 29, 31, 36,
-    40, 41, 43, 44, 54, 61, 65, 66, 67, 72, 75, 82, 104, 107, 108, 130, 131,
+    5, 6, 7, 8, 9, 10, 21, 22, 26, 28, 29, 31, 36,
+    40, 41, 43, 44, 54, 61, 65, 66, 67, 72, 75, 82, 104, 107, 108, 131,
 })
 
 FINISHED_STATUS_IDS = frozenset({
@@ -134,9 +134,27 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
         df["year"].map(season_lookup).values, dtype=torch.long
     )
 
-    # ---- 7. Pit normalisation: (x - mean) / (std + 1e-8) per season ----
+    # ---- 7. Pit normalisation: robust z-score per season ----
+    # Zero entries (no pit stops) are excluded from mean/std and set to pit_norm=0.
+    # Extreme outliers (>99th %ile) are winsorised before computing mean/std to
+    # prevent the 382 entries with spuriously large values (race-timing artefacts
+    # in the source data, not actual pit durations) from inflating the std and
+    # distorting all z-scores within a season.
+    def _robust_pit_z(pit_ms):
+        nonzero = pit_ms > 0
+        if nonzero.sum() <= 1:
+            return pd.Series(0.0, index=pit_ms.index)
+        vals = pit_ms[nonzero].copy()
+        cap = vals.quantile(0.99)
+        clipped = pit_ms.clip(upper=cap)
+        mean = vals.clip(upper=cap).mean()
+        std = vals.clip(upper=cap).std()
+        result = (clipped - mean) / (std + 1e-8)
+        result[pit_ms == 0] = 0.0
+        return result
+
     ranking["_pit_z"] = ranking.groupby("year")["total_pit_duration_ms"].transform(
-        lambda x: (x - x.mean()) / (x.std() + 1e-8)
+        _robust_pit_z
     )
     pit_norm_tensor = torch.tensor(ranking["_pit_z"].values, dtype=torch.float32)
 

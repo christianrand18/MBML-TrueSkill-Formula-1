@@ -158,8 +158,8 @@ factor("reliability", Bernoulli(mech_prob).log_prob(is_mech))
 
 The parameterisation `sigmoid(-alpha_rel - c_k)` ensures:
 - Higher `c_k` (better constructor) → lower mechanical DNF probability ✓
-- `alpha_rel` absorbs the baseline mechanical DNF rate (≈17% in this dataset;
-  at convergence `alpha_rel ≈ 1.6`)
+- `alpha_rel` absorbs the baseline mechanical DNF rate (≈7.7% in this dataset;
+  at convergence `alpha_rel ≈ 2.02`, giving `sigmoid(-2.02) ≈ 0.117`)
 - `c_k` adjusts reliability relative to the field average
 
 This correctly penalises low-quality constructors more for their failures and gives
@@ -368,36 +368,63 @@ identified by the likelihood), a fixed β is redundant.
 
 ---
 
-## 11. Pit-Stop Time: Operational Execution Covariate
+## 11. Pit-Stop Covariate: Data Quality and Interpretation
 
-**Decision:** Pit-stop time (`π_{d,r}`) in Model 3 is described as an **operational
-execution covariate**, not a driver variable or a shared variable.
+**Decision:** The pit-stop covariate `β_π` in Model 3 is retained but its
+interpretation is revised. The raw `total_pit_duration_ms` column contains
+severe data artefacts that make it unreliable as a measure of pit crew
+execution speed.
 
-**Framing:**  
-Conditioning on pit-stop time allows `c_k` to be interpreted as pure constructor *pace*.
-Operational execution — the speed and reliability of the pit crew — is separated from
-the raw pace advantage of the car. This is a deliberate decomposition.
+### 11.1 Data Quality Issues
 
-**Why this is defensible despite the mediator risk:**  
-Pit-stop time does sit on a partial causal path:
+Two artefacts were identified in the `total_pit_duration_ms` column:
 
-```
-Constructor quality ──► pit crew execution ──► race result
-Constructor quality ──► car pace ──────────► race result
-```
+**Zero-duration entries (271 ranking entries, 4.9%):** Drivers who retired before
+completing a pit stop (early driver-fault DNFs) have `total_pit_duration_ms = 0`.
+These entries are systematically at the bottom of the finishing order (mean
+position 19.3, 77% at pos 19+). This creates a mechanical correlation: "no pit
+stop → last place" which the model interprets as "higher pit duration → better
+performance," inflating `β_π` in the positive direction.
 
-By conditioning on pit-stop time, the model attributes the execution pathway to a
-separate coefficient (`β_π`) and lets `c_k` reflect only the pace pathway. This is
-a valid decomposition *if* pit-stop execution and car pace are imperfectly correlated —
-i.e. if some teams are fast but sloppy, or slow but precise. If they were perfectly
-correlated, the separation would be ill-conditioned.
+**Extreme outliers (382 entries, 6.6%):** Values exceeding 1,000,000 ms (up to
+3.7M ms = 61 minutes) appear in 24 races and cluster within those races. The
+per-stop average for affected races is ~14 minutes — physically impossible for
+a pit stop (typical: 2–4 seconds). The `milliseconds` column in the source
+`pit_stops` table appears to encode race-timing values (lap time × lap number
+at pit entry) rather than actual pit stop durations for these races. The
+`build_f1_model_data.py` code sums these values across stops, producing a
+variable that reflects strategic positioning rather than crew execution speed.
 
-**Limitation to flag in the report discussion:**  
-Dominant teams like Mercedes historically excelled at *both* pit-stop execution and
-raw pace. Over 2014–2021, the two dimensions were strongly positively correlated across
-the field. This collinearity limits how cleanly `c_k` and `β_π` can be separated for
-those teams. The discussion should note this explicitly: the pace/execution decomposition
-is most informative for teams with mismatches between the two dimensions.
+### 11.2 Mitigation
+
+A robust z-scoring procedure replaces the naive per-season z-score:
+- Zero entries are excluded from the per-season mean/std computation and
+  assigned `pit_norm = 0` (neutral pit contribution)
+- Extreme values are winsorised at the 99th percentile before computing
+  mean/std to prevent outlier races from inflating the standard deviation
+
+### 11.3 Interpretation
+
+With the robust z-scoring, `β_π` captures relative pit-stop positioning effects
+within each season, with outliers suppressed and non-pitting drivers contributing
+zero. The coefficient should still be interpreted cautiously: the source data
+limitation means `β_π` likely reflects a mixture of genuine crew speed differences,
+strategic choices, and residual data artefacts.
+
+**Framing for the report:**  
+The original framing of pit-stop time as a pure "operational execution covariate"
+is not supported by the data. Conditioning on this variable does not cleanly
+separate pace from execution — it introduces a noisy covariate whose sign and
+magnitude are not robustly interpretable. The positive `β_π` finding (+0.26)
+should be reported as an estimate from a data-limited covariate, not as evidence
+that longer pit times improve race performance.
+
+**Limitation to flag:**  
+Reliable pit-stop execution data (per-stop stopwatch durations from official F1
+timing) would be needed to draw firm conclusions about operational execution
+effects. The current `milliseconds` column in the Ergast `pit_stops` table has
+incorrect values for a subset of races. Without access to corrected data, `β_π`
+should be interpreted as an exploratory finding only.
 
 ---
 
@@ -542,5 +569,87 @@ The model's top-5 `delta_d` indices are [44, 2, 60, 15, 0]. Alonso (idx 4) ranks
 **Reasoning:** The original plot code incremented `fastest_won` whenever the prior-fastest driver was picked at ANY position in the simulated race (P1, P2, ..., P20), not just when they finished first. Because the driver with the highest performance score has the highest softmax probability at every elimination step, they are almost always picked somewhere in the top 20, producing a spurious win rate of ~1.00. The fix tracks position and only counts `pos == 0` as a win. The corrected win rate is 0.29, within the 20–80% acceptance band and consistent with the `test_prior_predictive.py` test result.
 
 **For the report:** The prior predictive check remains valid — the test infrastructure was always correct; only the standalone plot function had the bug.
+
+---
+
+## T9 — MECHANICAL_STATUS_IDS Corrections: Removed 18, 19, and 130
+
+**Decision:** StatusIDs 18, 19, and 130 were removed from `MECHANICAL_STATUS_IDS`.
+
+**Reasoning:**
+- **18 and 19:** These are "+8 Laps" and "+9 Laps" — finished statuses in Ergast, not
+  mechanical retirements. Three rows were misclassified (all have pit stops, confirming
+  they finished). They were incorrectly excluded from the Plackett-Luce ranking and
+  counted as mechanical DNFs in Model 3's Bernoulli reliability term.
+- **130 ("Collision damage"):** This is driver-fault or external-event damage, not a
+  car-internal failure. The report defines mechanical DNFs as "failures of the car or
+  its components" and explicitly excludes "driver mistakes like accidents, collisions,
+  or spins." 60 entries were misclassified.
+
+Combined effect: `is_mech` mean dropped from 0.0875 to 0.0769 (460/5980 = 7.7%).
+N_entries (ranking) increased from 5457 to 5520. All dataset assertions remain within
+validated bounds.
+
+**For the report:** The corrected mechanical DNF rate of 7.7% should be cited as
+the baseline for Model 3's reliability term calibration.
+
+---
+
+## T10 — Robust Pit Z-Scoring: Zero-Imputation and Extreme-Value Winsorisation
+
+**Decision:** The per-season pit duration z-scoring was replaced with a robust
+procedure that handles two data artefacts.
+
+**Two artefacts in the raw data:**
+
+1. **271 zero-duration entries** (4.9% of ranking entries): Early driver-fault DNFs
+   with zero pit stops. These are systematically at the bottom of the finishing order
+   (mean position 19.3, 77% at pos 19+), creating a mechanical correlation between
+   "no pit stop" and "ranked last" that inflates `beta_pi`.
+
+2. **382 extreme entries** (6.6% of ranking entries) with `total_pit_duration_ms >
+   1M ms` (maximum 3.7M ms = 61 min). These cluster within 24 races and represent
+   race-timing artefacts in the source data, not cumulative pit stop durations. The
+   per-stop average in affected races is ~14 minutes (physically impossible).
+
+**Fix applied:**
+- Zero entries are excluded from the per-season mean/std computation and given
+  `pit_norm = 0` (neutral pit contribution — no stops = no pit effect)
+- Values above the 99th within-season percentile are winsorised before computing
+  mean/std to prevent outlier races from inflating the standard deviation
+
+**For the report:** The pit-stop covariate interpretation must be revised. The
+original framing of `pi_norm` as pure "operational execution speed" was incorrect —
+the column measures a mixture of (summed) pit durations with severe measurement
+error in ~11% of entries. `beta_pi` should be treated as an exploratory covariate
+coefficient rather than a robust finding. Legitimate pit-stop execution analysis
+would require corrected per-stop timing data.
+
+---
+
+## T11 — Renault Constructor AR(1) Continuity Gap (2012–2015)
+
+**Decision:** The Renault constructor (constructorId 4) has a 4-year gap in its
+AR(1) chain: data exists for 2011 and 2016–2020, but not 2012–2015. During the gap,
+the Enstone factory operated as Lotus F1 Team under different constructorIds (205,
+206, 207) with different ownership and personnel.
+
+The current implementation treats Lotus as a separate constructor from Renault.
+The AR(1) random walk bridges the 2012–2015 gap for constructorId 4 through the
+innovation prior — the posterior for those seasons collapses to a random walk
+extrapolation from 2011, which is largely meaningless. This is observable in the
+constructor trajectory plots where Renault's line may show implausible drift across
+the gap years.
+
+**Reasoning for not remapping:** Lotus F1 Team was a legally separate entity from
+Renault F1 Team with different technical leadership. Merging them would imply
+engineering continuity that did not exist. The gap is a genuine discontinuity in
+the team's history that the model should respect.
+
+**For the report:** The Renault gap should be noted in the discussion as an example
+of the AR(1) model's behaviour under missing continuity. The random walk
+extrapolation over gap years is a prior artefact, not a data-driven estimate.
+Constructor trajectories should be interpreted only across contiguous seasons of
+the same constructor identity.
 
 ---

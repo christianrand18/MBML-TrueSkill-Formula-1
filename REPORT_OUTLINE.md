@@ -290,17 +290,19 @@ to the car rather than inflating recent drivers' skill estimates.
 
 **[FIGURE 5: β_w and β_π posterior densities]**
 
-- **β_w ≈ −0.08 (σ = 0.51):** The posterior on the global wet-weather coefficient
-  is centred near zero and spans the entire prior range. Wet conditions produce no
+- **β_w ≈ 0.00 (σ = 0.50):** The posterior on the global wet-weather coefficient
+  is centred at zero and spans the entire prior range. Wet conditions produce no
   consistent global shift in performance — any wet-weather signal is driver-specific.
-- **β_π ≈ +0.26 (σ = 0.02):** Tightly estimated and positive. Counter-intuitive
-  (faster pits should improve results, implying a negative coefficient), but reflects
-  that pit-stop duration correlates with strategic positioning: top teams run longer
-  two-stop strategies that reflect car advantage. The coefficient absorbs execution
-  and strategy jointly.
-- **α_rel ≈ 2.02:** Baseline mechanical DNF probability `sigmoid(−2.02) ≈ 11.7%`,
-  close to the empirical 8.7% rate. Constructor `c_k` then adjusts reliability
-  relative to the field average.
+- **β_π ≈ 0.00 (σ = 0.03):** Centred at zero with small uncertainty. After correcting
+  data artefacts in the pit-stop covariate (zero-imputation for non-pitting drivers
+  and winsorisation of extreme outliers), pit-stop duration shows no detectable effect
+  on race performance. The previously observed +0.26 was an artefact of the zero-
+  duration confound (early DNFs with zero pit time systematically finishing last) and
+  extreme-value inflation in the z-score normalisation. This null result is reported
+  as a finding: within-season relative pit-stop timing does not predict race outcomes.
+- **α_rel ≈ 2.09:** Baseline mechanical DNF probability `sigmoid(−2.09) ≈ 11.0%`,
+  close to the empirical 7.7% rate in the corrected dataset. Constructor `c_k` then
+  adjusts reliability relative to the field average.
 - **Wet-weather specialists (δ_d):** Posterior means are small and uncertainty is
   high for most drivers (~30 wet races out of 286 provide limited signal). The model
   cannot confidently identify individual wet-weather effects; this is reported as a
