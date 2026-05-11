@@ -65,7 +65,7 @@ def _build_shared_temporal_rows(rows, dataset):
 
 
 def _build_full_model_extra_rows(rows, dataset):
-    """Append circuit, weather, delta_d, beta_pi, alpha_rel rows (Model 3 only)."""
+    """Append circuit, weather, delta_d, beta_pi rows (Model 3 only)."""
     C = dataset.n_circuits
     D = dataset.n_drivers
 
@@ -168,17 +168,6 @@ def extract_posterior(model_name, dataset):
             "season": "all",
             "mu": beta_pi_loc.item(),
             "sigma": beta_pi_scale.item(),
-        })
-
-        alpha_rel_loc = pyro.param("alpha_rel_loc").detach().clone()
-        alpha_rel_scale = pyro.param("alpha_rel_scale").detach().clone()
-        rows.append({
-            "entity_type": "global",
-            "entity_id": -1,
-            "entity_name": "alpha_rel",
-            "season": "all",
-            "mu": alpha_rel_loc.item(),
-            "sigma": alpha_rel_scale.item(),
         })
 
     else:

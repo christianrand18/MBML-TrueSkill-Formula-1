@@ -87,7 +87,7 @@ These are invariants. Any implementation that violates them is wrong.
 
 2. **Sum-to-zero on constructors via reparameterisation.** Sample `c_raw` with shape `(K-1,)`, derive `c = cat([c_raw, -c_raw.sum()])`. The guide never samples `c` directly.
 
-3. **Mechanical DNFs excluded from Plackett-Luce ranking in Models 1 & 2.** They are included as a Bernoulli reliability term in Model 3 only.
+3. **Mechanical DNFs excluded from Plackett-Luce ranking.** Classified via `MECHANICAL_STATUS_IDS` and filtered out pre-ranking. No Bernoulli or other DNF modeling term. Driver-fault DNFs remain in ranking.
 
 4. **AR(1) via cumsum of innovations — no recursive `pyro.sample` loop.** See `tasks/plan.md` Task 6 for the exact pattern.
 

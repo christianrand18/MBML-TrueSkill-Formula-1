@@ -458,9 +458,6 @@ def main():
         "wet": dataset.wet,
         "race_lengths": dataset.race_lengths,
         "pit_norm": dataset.pit_norm,
-        "is_mech": dataset.is_mech,
-        "cons_idx_all": dataset.cons_idx_all,
-        "season_idx_all": dataset.season_idx_all,
     }
     losses3 = train_svi(model3, dataset, n_steps=5000, lr=0.01, log_every=500,
                         step_kwargs=step_kwargs3)
@@ -525,7 +522,6 @@ def main():
         print(f"  {rank+1:2d}. #{cid:3d} ({_label_for_constructor(cid):12s})  c = {c_val:+.4f}")
 
     print("\n--- Model 3 key parameters ---")
-    print(f"  alpha_rel = {posterior3['alpha_rel_loc'].item():.4f}")
     print(f"  beta_pi   = {posterior3['beta_pi_loc'].item():.4f}")
     print(f"  beta_w    = {posterior3['beta_w_loc'].item():.4f}")
 

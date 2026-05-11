@@ -29,9 +29,6 @@ class FullModel:
         wet,
         race_lengths,
         pit_norm,
-        is_mech,
-        cons_idx_all,
-        season_idx_all,
     ):
         D, K, T, C = self.D, self.K, self.T, self.C
 
@@ -62,10 +59,7 @@ class FullModel:
         # ---- Pit-stop coefficient ----
         beta_pi = pyro.sample("beta_pi", dist.Normal(0.0, 0.5))
 
-        # ---- Reliability intercept ----
-        alpha_rel = pyro.sample("alpha_rel", dist.Normal(0.0, 1.0))
-
-        # ---- Performance (ranking entries only) ----
+        # ---- Performance (all entries) ----
         p = (
             s[season_idx, driver_idx]
             + c[season_idx, cons_idx]
@@ -78,10 +72,6 @@ class FullModel:
         log_prob = plackett_luce_log_prob(p, race_lengths)
         pyro.factor("race_obs", log_prob)
 
-        # ---- Mechanical DNF reliability term (all rows) ----
-        mech_prob = torch.sigmoid(-alpha_rel - c[season_idx_all, cons_idx_all])
-        pyro.factor("reliability", dist.Bernoulli(mech_prob).log_prob(is_mech.float()).sum())
-
     def guide(
         self,
         driver_idx,
@@ -92,9 +82,6 @@ class FullModel:
         wet,
         race_lengths,
         pit_norm,
-        is_mech,
-        cons_idx_all,
-        season_idx_all,
     ):
         D, K, T, C = self.D, self.K, self.T, self.C
 
@@ -143,9 +130,3 @@ class FullModel:
             "beta_pi_scale", torch.tensor(1.0), constraint=dist.constraints.positive
         )
         pyro.sample("beta_pi", dist.Normal(beta_pi_loc, beta_pi_scale))
-
-        alpha_rel_loc = pyro.param("alpha_rel_loc", torch.tensor(0.0))
-        alpha_rel_scale = pyro.param(
-            "alpha_rel_scale", torch.tensor(1.0), constraint=dist.constraints.positive
-        )
-        pyro.sample("alpha_rel", dist.Normal(alpha_rel_loc, alpha_rel_scale))

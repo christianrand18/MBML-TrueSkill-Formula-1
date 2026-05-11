@@ -37,7 +37,7 @@
   three contributions:
   1. Replace the intractable Gaussian ranking likelihood with Plackett-Luce
   2. Add temporal AR(1) dynamics to track season-to-season skill evolution
-  3. Extend to wet-weather interactions, pit-stop covariates, and reliability
+  3. Extend to wet-weather interactions and pit-stop covariates
 
 ---
 
@@ -74,8 +74,7 @@ Alfa Romeo (51)→Sauber (15).
 **DNF classification:** 33 mechanical-fault status IDs are used to distinguish mechanical
 DNFs from driver-fault DNFs. Only 24 of these 33 IDs actually appear in the dataset,
 yielding a mechanical DNF rate of 7.7% — lower than the ~17% initially estimated.
-Mechanical DNFs are excluded from Plackett-Luce ranking in Models 1 & 2; Model 3
-includes them via a separate Bernoulli reliability term.
+Mechanical DNFs are excluded from Plackett-Luce ranking in all three models.
 
 **Observed covariates (Model 3 only):**
 - $w_r$ — binary wet indicator per race (from weather metadata).
@@ -138,8 +137,7 @@ future work.
 ranking creates an asymmetric bias: a high-performing constructor receives a larger
 gradient penalty for a mechanical failure than a low-performing one, because the
 model is more surprised by a last-place Mercedes than a last-place HRT. Models 1
-and 2 therefore exclude mechanical DNFs from the ranking entirely. Model 3 adds a
-separate Bernoulli reliability term.
+and 2 therefore exclude mechanical DNFs from the ranking entirely.
 
 ### 3.3 Three-Tier Complexity Ladder
 
@@ -157,10 +155,9 @@ Each tier answers a strictly harder scientific question than the one before it.
 | Global wet weather ($\beta_w$) | ✗ | ✗ | ✓ |
 | Driver wet skill ($\delta_d$) | ✗ | ✗ | ✓ |
 | Pit-stop covariate ($\beta_\pi$) | ✗ | ✗ | ✓ |
-| Reliability ($\alpha_{rel}$) | ✗ | ✗ | ✓ |
 | Observed covariates | None | None | $w_r$, $\pi_{d,r}$ |
-| Mechanical DNF handling | Excluded | Excluded | Bernoulli |
-| Number of latent variables | 93 | 1,344 | 1,455 |
+| Mechanical DNF handling | Excluded | Excluded | Excluded |
+| Number of latent variables | 93 | 1,344 | 1,454 |
 | Inference method | SVI + NUTS | SVI | SVI |
 | SVI steps | 3,000 | 5,000 | 5,000 |
 
@@ -238,34 +235,27 @@ emerge purely from race finishing orders.
 
 #### 3.3.3 Model 3 — Full
 
-**Plate diagram: Figure 3.** Extends the Model 2 plate with circuit nodes, observed
-covariates ($w_r$, $\pi_{d,r}$) feeding into the performance equation, and a separate
-Bernoulli reliability plate for mechanical DNFs.
+**Plate diagram: Figure 3.** Extends the Model 2 plate with circuit nodes and observed
+covariates ($w_r$, $\pi_{d,r}$) feeding into the performance equation.
 
 **Generative story:** Model 3 extends the temporal generative process (Section 3.3.2)
-with five additional sources of variance, each sampled independently:
+with four additional sources of variance, each sampled independently:
 
 1. For each circuit $c$, draw a track-specific effect $e_c \sim \mathcal{N}(0, \sigma_e)$.
 2. Draw a global wet-weather coefficient $\beta_w \sim \mathcal{N}(0, 0.5)$.
 3. For each driver $d$, draw a wet-weather interaction $\delta_d \sim \mathcal{N}(0, 0.3)$.
 4. Draw a pit-stop coefficient $\beta_\pi \sim \mathcal{N}(0, 0.3)$.
-5. Draw a baseline reliability intercept $\alpha_{rel} \sim \mathcal{N}(0, 2)$.
 
 For each race $r$, the per-driver performance is the sum of the temporal skill terms,
 circuit effect, wet-weather effects (global $\beta_w \cdot w_r$ and driver-specific
 $\delta_d \cdot w_r$), and the pit-stop adjustment $\beta_\pi \cdot \pi_{d,r}$.
-The finishing order (excluding mechanical DNFs) is drawn from Plackett-Luce$(p_r)$.
-Separately, for each driver-race entry, a mechanical DNF indicator is drawn from
-Bernoulli$(\sigma(-\alpha_{rel} - c_{k(d,r),t(r)}))$ — better constructors fail less often.
+The finishing order is drawn from Plackett-Luce$(p_r)$.
 
 **Full performance equation:**
 $$p_{d,r} = s_{d,t(r)} + c_{k(d,r),t(r)} + e_{circ(r)} + \beta_w w_r + \delta_d w_r + \beta_\pi \pi_{d,r}$$
 
-**Additional likelihood term (reliability):**
-$$P(\text{mechanical DNF} \mid c_k) = \sigma(-\alpha_{rel} - c_k)$$
-
 **Priors:**
-- $\sigma_e = 0.5$, $\sigma_{\beta_w} = \sigma_{\beta_\pi} = \sigma_{\delta} = 0.3$, $\sigma_{\alpha_{rel}} = 2.0$
+- $\sigma_e = 0.5$, $\sigma_{\beta_w} = \sigma_{\beta_\pi} = \sigma_{\delta} = 0.3$
 - AR(1) innovation scales and initial skill priors as in Model 2
 
 **Motivation — the five additions:**
@@ -291,11 +281,6 @@ $$P(\text{mechanical DNF} \mid c_k) = \sigma(-\alpha_{rel} - c_k)$$
    pure car pace — operational execution is attributed to a separate coefficient.
    $\pi_{d,r}$ is z-scored per season with zero-imputation for non-pitting drivers
    and winsorisation at the 99th percentile to clamp extreme outliers.
-
-5. **Bernoulli reliability term**: mechanical DNFs are excluded from the Plackett-Luce
-   ranking (avoiding the asymmetric bias described in Section 3.2), but they carry real
-   constructor signal. $\alpha_{rel}$ absorbs the baseline failure rate; $c_k$ adjusts
-   each constructor relative to the field.
 
 ### 3.4 Inference
 
@@ -407,9 +392,6 @@ to the car rather than inflating recent drivers' skill estimates.
   duration confound (early DNFs with zero pit time systematically finishing last) and
   extreme-value inflation in the z-score normalisation. This null result is reported
   as a finding: within-season relative pit-stop timing does not predict race outcomes.
-- **α_rel ≈ 2.09:** Baseline mechanical DNF probability `sigmoid(−2.09) ≈ 11.0%`,
-  close to the empirical 7.7% rate in the corrected dataset. Constructor `c_k` then
-  adjusts reliability relative to the field average.
 - **Wet-weather specialists (δ_d):** Posterior means are small and uncertainty is
   high for most drivers (~30 wet races out of 286 provide limited signal). The model
   cannot confidently identify individual wet-weather effects; this is reported as a
@@ -445,7 +427,6 @@ active seasons.
 
 **Future work:**
 - Learnable temperature parameter β (equivalent to TrueSkill's performance noise)
-- Separate reliability latent `r_k` to disentangle pace and mechanical robustness in `c_k`
 - Richer variational family (LKJ prior on constructor covariance) to reduce mean-field bias
 - Circuit-weather interaction term to disentangle Spa-type confounding
 

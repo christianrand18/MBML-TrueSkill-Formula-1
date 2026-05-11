@@ -43,10 +43,6 @@ class F1RankingDataset:
     race_order: torch.Tensor       # (N_entries,) LongTensor — 0=winner within-race
     race_lengths: torch.Tensor     # (N_races,) LongTensor — entries per race
 
-    is_mech: torch.Tensor          # (N_all,) BoolTensor — True if mechanical DNF
-    cons_idx_all: torch.Tensor     # (N_all,) LongTensor — constructor index for all rows
-    season_idx_all: torch.Tensor   # (N_all,) LongTensor — season index for all original rows
-
     n_drivers: int
     n_constructors: int
     n_seasons: int
@@ -85,17 +81,11 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
     # ---- 3. DNF classification ----
     is_finished = df["statusId"].isin(FINISHED_STATUS_IDS)
     is_mechanical = df["statusId"].isin(MECHANICAL_STATUS_IDS)
-    # driver-fault = everything else (not finished, not mechanical)
 
-    # Ranking entries: finished + driver-fault DNFs, exclude mechanical DNFs.
-    # Since driver-fault = ~finished & ~mechanical, and mechanical DNFs are
-    # explicitly excluded from the Plackett-Luce ranking, the ranking mask is
-    # simply all rows that are NOT mechanical DNFs.
     include_rank = ~is_mechanical
     ranking = df.loc[include_rank].copy()
 
-    # ---- 4. Build per-race covariates (over all rows, before ranking filter) ----
-    # wet: one value per race (consistent within a race)
+    # ---- 4. Build per-race covariates (over all rows) ----
     race_wet = df.groupby("raceId")["is_wet"].first()
     wet_tensor = torch.tensor(
         [race_wet[r] for r in unique_races], dtype=torch.float32
@@ -108,30 +98,24 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
     )
 
     # ---- 6. race_order: 0 = winner within each race ----
-    # Sort ranking entries within each race by positionOrder ascending
-    ranking = ranking.sort_values(["raceId", "positionOrder"])
-    ranking["_order"] = ranking.groupby("raceId").cumcount()
-    race_order_tensor = torch.tensor(ranking["_order"].values, dtype=torch.long)
+    df_sorted = ranking.sort_values(["raceId", "positionOrder"])
+    df_sorted["_order"] = df_sorted.groupby("raceId").cumcount()
+    race_order_tensor = torch.tensor(df_sorted["_order"].values, dtype=torch.long)
 
-    # After sorting, indices are stable; build entry-level tensors from sorted df
     driver_idx_tensor = torch.tensor(
-        ranking["driverId"].map(driver_lookup).values, dtype=torch.long
+        df_sorted["driverId"].map(driver_lookup).values, dtype=torch.long
     )
     cons_idx_tensor = torch.tensor(
-        ranking["constructorId"].map(constructor_lookup).values, dtype=torch.long
+        df_sorted["constructorId"].map(constructor_lookup).values, dtype=torch.long
     )
     season_idx_tensor = torch.tensor(
-        ranking["year"].map(season_lookup).values, dtype=torch.long
+        df_sorted["year"].map(season_lookup).values, dtype=torch.long
     )
     circuit_idx_tensor = torch.tensor(
-        ranking["circuitId"].map(circuit_lookup).values, dtype=torch.long
+        df_sorted["circuitId"].map(circuit_lookup).values, dtype=torch.long
     )
     race_idx_tensor = torch.tensor(
-        ranking["raceId"].map(race_lookup).values, dtype=torch.long
-    )
-
-    season_idx_all_tensor = torch.tensor(
-        df["year"].map(season_lookup).values, dtype=torch.long
+        df_sorted["raceId"].map(race_lookup).values, dtype=torch.long
     )
 
     # ---- 7. Pit normalisation: robust z-score per season ----
@@ -153,18 +137,12 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
         result[pit_ms == 0] = 0.0
         return result
 
-    ranking["_pit_z"] = ranking.groupby("year")["total_pit_duration_ms"].transform(
+    df_sorted["_pit_z"] = df_sorted.groupby("year")["total_pit_duration_ms"].transform(
         _robust_pit_z
     )
-    pit_norm_tensor = torch.tensor(ranking["_pit_z"].values, dtype=torch.float32)
+    pit_norm_tensor = torch.tensor(df_sorted["_pit_z"].values, dtype=torch.float32)
 
-    # ---- 8. Model 3 fields (N_all = all original rows) ----
-    is_mech_tensor = torch.tensor(is_mechanical.values, dtype=torch.bool)
-    cons_idx_all_tensor = torch.tensor(
-        df["constructorId"].map(constructor_lookup).values, dtype=torch.long
-    )
-
-    # ---- 9. Assemble dataset ----
+    # ---- 8. Assemble dataset ----
     ds = F1RankingDataset(
         driver_idx=driver_idx_tensor,
         cons_idx=cons_idx_tensor,
@@ -175,9 +153,6 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
         wet=wet_tensor,
         race_order=race_order_tensor,
         race_lengths=race_lengths_tensor,
-        is_mech=is_mech_tensor,
-        cons_idx_all=cons_idx_all_tensor,
-        season_idx_all=season_idx_all_tensor,
         n_drivers=len(unique_drivers),
         n_constructors=len(unique_constructors),
         n_seasons=len(unique_seasons),
@@ -187,13 +162,8 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
         constructor_map=constructor_map,
     )
 
-    # ---- 10. Assertions ----
+    # ---- 9. Assertions ----
     assert ds.n_races == 286, f"Expected 286 races, got {ds.n_races}"
-
-    mech_mean = ds.is_mech.float().mean().item()
-    assert 0.05 <= mech_mean <= 0.25, (
-        f"is_mech mean {mech_mean:.4f} outside [0.05, 0.25]"
-    )
 
     assert ds.race_lengths.sum().item() == ds.driver_idx.shape[0], (
         "race_lengths.sum() must equal N_entries"
@@ -213,8 +183,5 @@ def load_dataset(csv_path: str = "data_preprocessing/f1_enriched.csv") -> F1Rank
     assert ds.race_lengths.dtype == torch.long, "race_lengths must be LongTensor"
     assert ds.pit_norm.dtype == torch.float32, "pit_norm must be FloatTensor"
     assert ds.wet.dtype == torch.float32, "wet must be FloatTensor"
-    assert ds.is_mech.dtype == torch.bool, "is_mech must be BoolTensor"
-    assert ds.cons_idx_all.dtype == torch.long, "cons_idx_all must be LongTensor"
-    assert ds.season_idx_all.dtype == torch.long, "season_idx_all must be LongTensor"
 
     return ds

@@ -170,7 +170,6 @@ def extract_svi_posterior_full(model) -> dict[str, torch.Tensor]:
     beta_w_loc = pyro.param("beta_w_loc").detach().clone()
     delta_d_loc = pyro.param("delta_d_loc").detach().clone()
     beta_pi_loc = pyro.param("beta_pi_loc").detach().clone()
-    alpha_rel_loc = pyro.param("alpha_rel_loc").detach().clone()
 
     return {
         "s_loc": s_loc,               # (T, D)
@@ -179,5 +178,4 @@ def extract_svi_posterior_full(model) -> dict[str, torch.Tensor]:
         "beta_w_loc": beta_w_loc,     # scalar
         "delta_d_loc": delta_d_loc,   # (D,)
         "beta_pi_loc": beta_pi_loc,   # scalar
-        "alpha_rel_loc": alpha_rel_loc,  # scalar
     }
