@@ -88,12 +88,18 @@ unchanged. We enforce `Σ_k c_k = 0` via reparameterisation: sample K−1 free
 constructor scores `c_raw` and derive `c_K = −Σ c_raw`. This holds exactly
 throughout training.
 
-**Grid position excluded (blocking variable):**  
-Grid position sits on the causal path Skill → Qualifying → Grid → Race Result.
-Including it as an observed covariate blocks the information path from skill to
-race outcome — effectively splitting the model into two independent sub-models
-with no information flow between skill and race result. This is the blocking
-variable pitfall: the model would decompose uselessly. Grid position is excluded.
+**Grid position excluded:**  
+Qualifying performance is itself an expression of the latent variables we are
+estimating — driver skill and constructor quality jointly determine how fast a
+car laps in qualifying, and therefore where it starts on the grid. Grid position
+is downstream of the skill signal, not independent of it. Conditioning on grid
+position as a covariate would partial out this information, producing skill
+estimates that reflect only race-execution ability (overtaking, tyre management,
+strategy) rather than total driver quality. Since our goal is holistic skill
+separation — capturing the full contribution of driver and car to race outcomes —
+we exclude grid position and allow qualifying performance to contribute to the
+skill signal naturally. A complete treatment would model qualifying and race
+jointly in a two-stage model; we leave this as future work.
 
 **DNF handling:**  
 Including mechanical DNFs at last place in the Plackett-Luce ranking creates an
