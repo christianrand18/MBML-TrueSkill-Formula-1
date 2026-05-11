@@ -51,7 +51,7 @@ def extract_svi_posterior(model) -> dict[str, torch.Tensor]:
 
 
 def extract_svi_posterior_extended(model) -> dict[str, torch.Tensor]:
-    """Extract reconstructed temporal posterior means for Model 2."""
+    """Extract reconstructed temporal posterior means for Model 2 (temporal only)."""
     T, D = model.T, model.D
     K = model.K
 
@@ -64,14 +64,9 @@ def extract_svi_posterior_extended(model) -> dict[str, torch.Tensor]:
     c_raw_loc = torch.cat([c0_raw_loc.unsqueeze(0), c0_raw_loc.unsqueeze(0) + c_innov_loc.cumsum(0)], dim=0)
     c_loc = torch.cat([c_raw_loc, -c_raw_loc.sum(dim=1, keepdim=True)], dim=1)
 
-    e_circ_loc = pyro.param("e_circ_loc").detach().clone()
-    beta_w_loc = pyro.param("beta_w_loc").detach().clone()
-
     return {
-        "s_loc": s_loc,          # (T, D)
-        "c_loc": c_loc,          # (T, K)
-        "e_circ_loc": e_circ_loc,
-        "beta_w_loc": beta_w_loc,
+        "s_loc": s_loc,
+        "c_loc": c_loc,
     }
 
 

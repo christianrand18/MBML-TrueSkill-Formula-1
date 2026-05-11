@@ -13,12 +13,11 @@ def _expand_raw_c_scale(raw_scale):
     return torch.cat([raw_scale, mean.unsqueeze(0)])
 
 
-def _build_temporal_rows(rows, dataset):
-    """Append rows for driver, constructor, circuit, and beta_w (shared by extended and full)."""
+def _build_shared_temporal_rows(rows, dataset):
+    """Append rows for driver and constructor temporal posteriors (Models 2 & 3)."""
     T = dataset.n_seasons
     D = dataset.n_drivers
     K = dataset.n_constructors
-    C = dataset.n_circuits
 
     s0_loc = pyro.param("s0_loc").detach().clone()
     s_innov_loc = pyro.param("s_innov_loc").detach().clone()
@@ -65,6 +64,12 @@ def _build_temporal_rows(rows, dataset):
                 "mu": c_loc[t, i].item(),
                 "sigma": c_scale[t, i].item(),
             })
+
+
+def _build_full_model_extra_rows(rows, dataset):
+    """Append circuit, weather, delta_d, beta_pi, alpha_rel rows (Model 3 only)."""
+    C = dataset.n_circuits
+    D = dataset.n_drivers
 
     e_circ_loc = pyro.param("e_circ_loc").detach().clone()
     e_circ_scale = pyro.param("e_circ_scale").detach().clone()
@@ -138,10 +143,11 @@ def extract_posterior(model_name, dataset):
             })
 
     elif model_name == "extended":
-        _build_temporal_rows(rows, dataset)
+        _build_shared_temporal_rows(rows, dataset)
 
     elif model_name == "full":
-        _build_temporal_rows(rows, dataset)
+        _build_shared_temporal_rows(rows, dataset)
+        _build_full_model_extra_rows(rows, dataset)
 
         delta_d_loc = pyro.param("delta_d_loc").detach().clone()
         delta_d_scale = pyro.param("delta_d_scale").detach().clone()

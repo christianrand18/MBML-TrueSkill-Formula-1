@@ -125,8 +125,8 @@ Each tier answers a strictly harder scientific question than the one before it.
 | Model | Latent variables | Observed covariates | Scientific question |
 |---|---|---|---|
 | **1 — Baseline** | `s_d` (D scalars), `c_k` (K−1 scalars) — both static across all seasons | None | Can we separate driver from car at all? |
-| **2 — Extended** | `s_{d,t}` (D×T, AR(1) random walk), `c_{k,t}` (K−1×T, AR(1)), `e_c` (C circuit effects), `β_w` (global scalar) | `w_r` — binary wet indicator per race | Do skills change over time? Does the car dominate in certain regulation eras? |
-| **3 — Full** | All of Model 2, plus `δ_d` (D wet-skill scalars), `β_π` (global scalar), `α_rel` (reliability intercept) | All of Model 2, plus `π_{d,r}` — normalised pit-stop duration | Do some drivers excel specifically in the rain? Does pit-stop execution affect results beyond car pace? |
+| **2 — Extended** | `s_{d,t}` (D×T, AR(1) random walk), `c_{k,t}` (K−1×T, AR(1)) | None | Do skills change over time? |
+| **3 — Full** | All of Model 2, plus `e_c` (C circuit effects), `β_w` (global scalar), `δ_d` (D wet-skill scalars), `β_π` (global scalar), `α_rel` (reliability intercept) | `w_r` — binary wet indicator per race; `π_{d,r}` — normalised pit-stop duration | What additional structure exists in race outcomes beyond temporal skill dynamics? |
 
 **Model 1 — Baseline (Static):**  
 The simplest possible instantiation of the skill-separation problem. One scalar skill
@@ -152,29 +152,39 @@ and symmetrically for `c_{k,t}`. The innovation variance `γ_s = 0.3` (drivers) 
 `γ_c = 0.5` (constructors — larger, reflecting that regulation changes can cause
 step-changes in car performance overnight). Implemented via cumulative sums of
 sampled innovation vectors rather than a recursive sample loop, keeping the latent
-space fully vectorised. Two additional terms are added: circuit-specific effects
-`e_c ~ N(0, σ_e)` absorb track-specific biases independent of car and driver, and
-a global wet-weather coefficient `β_w ~ N(0, 0.5)` tests whether rain shifts all
-drivers' performance equally. This is the key model tier: it can recover
-regulation-era step-changes in constructor performance that the static model
-completely misses.
+space fully vectorised. The performance equation is purely temporal:
+`p_{d,r} = s_{d,t(r)} + c_{k(d,r),t(r)}`. This model answers a single clean question:
+do skills change over time? It recovers regulation-era step-changes in constructor
+performance that the static model completely misses — Mercedes' hybrid-era dominance
+(2014–2021), Red Bull's ground-effect surge (2022–2023), and McLaren's Honda-era
+collapse (2015–2018) all emerge purely from race finishing orders.
 
 **Model 3 — Full:**  
-Extends Model 2 with three additions that each capture a distinct source of variance
-in race outcomes:
+Extends the temporal model with five additions that each capture a distinct source
+of variance in race outcomes:
 
-1. **Driver wet-weather interaction** `δ_d · w_r`: a driver-specific wet-weather
+1. **Circuit effects** `e_c ~ N(0, σ_e)`: per-circuit latent effects absorb
+   track-specific biases independent of car and driver. Circuits like Monaco or
+   Monza impose fundamentally different demands, and without circuit effects,
+   constructor skill estimates would be confounded by which circuits each team
+   happened to race well at.
+
+2. **Global wet-weather coefficient** `β_w ~ N(0, 0.5)`: tests whether rain shifts
+   all drivers' performance equally. A prior predictive check shows no strong
+   expectation on the sign or magnitude.
+
+3. **Driver wet-weather interaction** `δ_d · w_r`: a driver-specific wet-weather
    skill modifier that activates only in wet races. Crucially, this is a
    multiplicative interaction with the rain indicator `w_r`, not an additive term —
    `δ_d` on its own would affect all races, which is wrong. `β_w` captures the
    average wet-weather effect across all drivers; `δ_d` captures each driver's
    deviation from that average.
 
-2. **Pit-stop covariate** `β_π · π_{d,r}`: normalised pit-stop duration enters as
+4. **Pit-stop covariate** `β_π · π_{d,r}`: normalised pit-stop duration enters as
    a fixed observed covariate. Conditioning on it allows `c_k` to be interpreted as
    pure car pace — operational execution is attributed to a separate coefficient.
 
-3. **Bernoulli reliability term**: mechanical DNFs are excluded from the Plackett-Luce
+5. **Bernoulli reliability term**: mechanical DNFs are excluded from the Plackett-Luce
    ranking (avoiding the asymmetric bias described above), but they carry real
    constructor signal. A separate observation equation `sigmoid(−α_rel − c_k)` models
    the probability of a mechanical failure: better constructors fail less often.
@@ -290,10 +300,10 @@ to the car rather than inflating recent drivers' skill estimates.
 
 **[FIGURE 5: β_w and β_π posterior densities]**
 
-- **β_w ≈ 0.00 (σ = 0.50):** The posterior on the global wet-weather coefficient
-  is centred at zero and spans the entire prior range. Wet conditions produce no
+- **β_w ≈ −0.03 (σ = 0.51):** The posterior on the global wet-weather coefficient
+  is centred near zero and spans the entire prior range. Wet conditions produce no
   consistent global shift in performance — any wet-weather signal is driver-specific.
-- **β_π ≈ 0.00 (σ = 0.03):** Centred at zero with small uncertainty. After correcting
+- **β_π ≈ 0.02 (σ = 0.03):** Centred near zero with small uncertainty. After correcting
   data artefacts in the pit-stop covariate (zero-imputation for non-pitting drivers
   and winsorisation of extreme outliers), pit-stop duration shows no detectable effect
   on race performance. The previously observed +0.26 was an artefact of the zero-

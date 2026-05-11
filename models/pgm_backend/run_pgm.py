@@ -431,9 +431,6 @@ def main():
         "driver_idx": dataset.driver_idx,
         "cons_idx": dataset.cons_idx,
         "season_idx": dataset.season_idx,
-        "circuit_idx": dataset.circuit_idx,
-        "race_idx": dataset.race_idx,
-        "wet": dataset.wet,
         "race_lengths": dataset.race_lengths,
     }
     losses2 = train_svi(model2, dataset, n_steps=5000, lr=0.01, log_every=500,
