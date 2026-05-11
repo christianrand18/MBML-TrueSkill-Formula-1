@@ -17,3 +17,12 @@ include/
 # Data
 data/
 bugfixes.md
+
+# LaTeX build artifacts
+report/*.aux
+report/*.log
+report/*.out
+report/*.pdf
+report/*.synctex.gz
+report/*.fdb_latexmk
+report/*.fls

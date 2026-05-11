@@ -61,8 +61,6 @@ def _build_shared_temporal_rows(rows, dataset):
                 "entity_id": dataset.constructor_map[i],
                 "entity_name": "",
                 "season": t,
-                "mu": c_loc[t, i].item(),
-                "sigma": c_scale[t, i].item(),
             })
 
 
