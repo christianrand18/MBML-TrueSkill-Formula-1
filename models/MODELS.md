@@ -161,6 +161,42 @@ impractical. This is our **inference validation** step.
 
 ## Model 1 — Baseline (Static Skills)
 
+### Plate diagram
+
+```
+                         σ_s                σ_c
+                          │                  │
+                          ▼                  ▼
+         ┌──────────────────────────────────────────────┐
+         │                 D drivers                     │
+         │  s_d ~ N(0, σ_s)          (s_d)              │
+         └──────────────────────────────────────────────┘
+                          │
+                          │  s_d
+                          ▼
+         ┌──────────────────────────────────────────────┐
+         │                 K constructors               │  sum-to-zero
+         │  c_raw ~ N(0, σ_c)    (c_k)  ◄──────────────  Σ c_k = 0
+         └──────────────────────────────────────────────┘
+                          │
+                          │  c_k(d,r)
+                          ▼
+                    p_{d,r} = s_d + c_{k(d,r)}
+                          │
+                          ▼
+         ┌──────────────────────────────────────────────┐
+         │              R races (N_dr per race)         │
+         │  [π_r]  ◄── Plackett-Luce(softmax(p_dr))    │
+         └──────────────────────────────────────────────┘
+
+   LEGEND:  ( ) latent    [ ] observed    ┌──┐ plate (repetition)
+```
+
+- **$D$ plate:** One driver skill $s_d$ per driver. Repeated 77 times.
+- **$K$ plate:** One constructor performance $c_k$ per constructor. Repeated 17 times. Constrained so all 17 sum to zero.
+- **$R$ plate:** For each race, the observed finishing order $[\pi_r]$ is generated from the performance scores via Plackett-Luce.
+- **No arrow between $s$ and $c$:** They are independent in the prior (both $\mathcal{N}(0,1)$). They only become coupled through the likelihood — the data tells us how they combine.
+
 ### What it answers
 
 **Can we separate driver from constructor at all?** This is the simplest possible
@@ -214,6 +250,54 @@ because both are static. This is the core limitation that motivates Model 2.
 ---
 
 ## Model 2 — Temporal
+
+### Plate diagram
+
+```
+         σ_s                           γ_s
+          │                             │
+          ▼                             ▼
+    s_{d,0} ~ N(0, σ_s)    ε_{d,t} ~ N(0, γ_s)
+          │                             │
+          └──────────┬──────────────────┘
+                     │  cumsum: s_t = s_0 + Σ_{τ=1}^t ε_τ
+                     ▼
+   ┌─────────────────────────────────────────────────────────┐
+   │               T=14 seasons × D=77 drivers              │
+   │                                                         │
+   │  (s_{d,0}) ──► (s_{d,1}) ──► (s_{d,2}) ──► ... ──► (s_{d,13})  │
+   │     AR(1) random walk: s_{d,t} = s_{d,t-1} + ε_{d,t}  │
+   └─────────────────────────────────────────────────────────┘
+                     │  s_{d, t(r)}
+                     ▼
+               p = s_{d,t(r)} + c_{k,t(r)}
+                     ▲
+                     │  c_{k, t(r)}
+                     │
+   ┌─────────────────────────────────────────────────────────┐
+   │               T=14 seasons × K=17 constructors         │
+   │                                                         │
+   │  (c_{k,0}) ──► (c_{k,1}) ──► (c_{k,2}) ──► ... ──► (c_{k,13})  │
+   │     AR(1) random walk, sum-to-zero per season          │
+   │     γ_c = 0.5  (larger than drivers — reg changes)     │
+   └─────────────────────────────────────────────────────────┘
+          ▲                             ▲
+          │                             │
+          ▼                             ▼
+         σ_c                           γ_c
+
+                     │
+                     ▼
+   ┌─────────────────────────────────────────────────────────┐
+   │                   R=286 races                           │
+   │  [π_r]  ◄── Plackett-Luce(softmax(p))                  │
+   └─────────────────────────────────────────────────────────┘
+```
+
+- **Two AR(1) walks:** Driver skill and constructor performance now evolve per season. Each depends only on the previous season's value plus a random innovation.
+- **Innovation scales:** $\gamma_s = 0.3$ means drivers change gradually. $\gamma_c = 0.5$ means constructors can shift faster — regulation changes are larger shocks than individual driver development.
+- **Cumsum implementation:** Not drawn as $T$ separate sample sites. In code, the entire $(T,D)$ trajectory is built from 2 Pyro samples (initial state + innovations tensor) with a single `cumsum`.
+- **Sum-to-zero per season:** Each season $t$ has its own $\sum_k c_{k,t} = 0$ constraint. A constructor's performance is always measured relative to the field average in that season.
 
 ### What it answers
 
@@ -299,6 +383,75 @@ track career arcs while still sharing information across seasons.
 ---
 
 ## Model 3 — Full
+
+### Plate diagram
+
+```
+  LIKELIHOOD:
+
+    σ_s    γ_s    σ_c    γ_c    σ_e      σ_δ
+     │      │      │      │      │        │
+     ▼      ▼      ▼      ▼      ▼        ▼
+  (s_{d,0}) (ε_d) (c_{k,0}) (η_k) (e_c)  (δ_d)   (β_w)   (β_π)   (α_rel)
+     │      │      │      │      │        │        │       │       │
+     └──┬───┘      └──┬───┘      │        │        │       │       │
+        │ cumsum      │ cumsum    │        │        │       │       │
+        ▼             ▼           │        │        │       │       │
+   ┌─────────────────────────┐    │        │        │       │       │
+   │  (s_{d,t}) T×D          │    │        │        │       │       │
+   │  AR(1) per driver       │    │        │        │       │       │
+   └─────────────────────────┘    │        │        │       │       │
+        │                         │        │        │       │       │
+        │  s_{d,t(r)}             │        │        │       │       │
+        ▼                         ▼        │        │       │       │
+   ┌─────────────────────────┐  (e_c)     │        │       │       │
+   │  (c_{k,t}) T×K          │   │        │        │       │       │
+   │  AR(1), Σc=0 per t      │   │        │        │       │       │
+   └─────────────────────────┘   │        │        │       │       │
+        │                        │        │        │       │       │
+        │  c_{k,t(r)}            │        │        │       │       │
+        │                        │        │        │       │       │
+        ▼                        ▼        │        │       │       │
+        └──────────┬─────────────┘        │        │       │       │
+                   │                      │        │       │       │
+                   │    e_{circ(r)}       │        │       │       │
+                   ▼                      ▼        ▼       ▼       │
+                   └──────────────────────┴────────┴───────┘       │
+                   │                                               │
+                   │  p = s + c + e_circ + β_w·w_r + δ_d·w_r + β_π·π
+                   │                                               │
+                   ▼                                               │
+   ┌─────────────────────────────────────────────────────────┐     │
+   │              R=286 races (ranking entries only)         │     │
+   │              [w_r] = wet indicator (observed)           │     │
+   │              [π_{d,r}] = pit duration (observed)        │     │
+   │                                                         │     │
+   │  [ordering π_r]  ◄── Plackett-Luce(softmax(p))         │     │
+   └─────────────────────────────────────────────────────────┘     │
+                                                                    │
+  RELIABILITY (separate factor, over ALL 5980 rows):                │
+                                                                    │
+   ┌─────────────────────────────────────────────────────────┐     │
+   │              N_all = 5980 entries                        │     │
+   │                                                         │     │
+   │  [is_mech] ◄── Bernoulli(σ(-α_rel - c_{k,t}))  ◄──────────────┘
+   │  1 = mech DNF, 0 = finished or driver-fault            (α_rel)
+   └─────────────────────────────────────────────────────────┘
+```
+
+### How to read this diagram
+
+- **Top row:** Priors. Each latent variable has a prior distribution (specified by its hyperparameters $\sigma_s$, $\gamma_s$, etc.). The priors encode our beliefs before seeing data.
+
+- **Middle rows (AR walks):** The temporal structure from Model 2 — driver skills $s_{d,t}$ and constructor performances $c_{k,t}$ evolve as random walks across 14 seasons.
+
+- **Bottom-left (performance):** The performance equation $p_{d,r}$ combines all latent contributions (driver, constructor, circuit, weather, pit) into a single score per driver per race. The Plackett-Luce likelihood converts these scores into the probability of the observed finishing order.
+
+- **Observed covariates:** $w_r$ (is it raining?) and $\pi_{d,r}$ (normalised pit duration) are read from the data, not inferred. They act as switches — $w_r = 0$ (dry race) zeroes out both $\beta_w$ and $\delta_d$, making them irrelevant for that race.
+
+- **Bottom-right (reliability):** A completely separate observation equation. Every one of the 5980 entries (including mechanical DNFs excluded from the ranking) contributes a Bernoulli signal: did this constructor have a mechanical failure? This is how Model 3 uses DNF information that Models 1 and 2 throw away.
+
+- **No arrow from reliability back to ranking:** The Bernoulli term does not affect Plackett-Luce. $c_k$ is informed by *both* equations independently, which is the correct setup — constructor quality has two dimensions (pace and reliability) that both contribute to the posterior.
 
 ### What it answers
 
