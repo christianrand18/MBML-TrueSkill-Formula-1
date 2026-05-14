@@ -387,6 +387,9 @@ def main():
     os.makedirs(PLOTS_DIR, exist_ok=True)
     t_start = time.time()
 
+    torch.manual_seed(42)
+    pyro.set_rng_seed(42)
+
     # ---------- Load dataset ----------
     print("Loading dataset...")
     dataset = load_dataset()

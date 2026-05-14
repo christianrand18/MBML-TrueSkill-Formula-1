@@ -122,12 +122,12 @@ def _add_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
     # -- Wet‑race flags
     if "precip_sum_mm" in df.columns:
         precip = df["precip_sum_mm"].fillna(0)
-        df["is_wet"] = (precip > 0).astype(int)
+        df["is_wet"] = (precip >= 2).astype(int)
         df["is_very_wet"] = (precip >= 5).astype(int)
 
         conditions = [
-            (precip == 0),
-            (precip > 0) & (precip < 5),
+            (precip < 2),
+            (precip >= 2) & (precip < 5),
             (precip >= 5),
         ]
         choices = ["dry", "wet", "very_wet"]
