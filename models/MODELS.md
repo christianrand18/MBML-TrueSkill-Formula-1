@@ -392,7 +392,7 @@ track career arcs while still sharing information across seasons.
     σ_s    γ_s    σ_c    γ_c    σ_e      σ_δ
      │      │      │      │      │        │
      ▼      ▼      ▼      ▼      ▼        ▼
-  (s_{d,0}) (ε_d) (c_{k,0}) (η_k) (e_c)  (δ_d)   (β_w)   (β_π)   (α_rel)
+  (s_{d,0}) (ε_d) (c_{k,0}) (η_k) (e_c)  (δ_d)   (β_w)   (β_π)
      │      │      │      │      │        │        │       │       │
      └──┬───┘      └──┬───┘      │        │        │       │       │
         │ cumsum      │ cumsum    │        │        │       │       │
@@ -429,14 +429,7 @@ track career arcs while still sharing information across seasons.
    │  [ordering π_r]  ◄── Plackett-Luce(softmax(p))         │     │
    └─────────────────────────────────────────────────────────┘     │
                                                                     │
-  RELIABILITY (separate factor, over ALL 5980 rows):                │
-                                                                    │
-   ┌─────────────────────────────────────────────────────────┐     │
-   │              N_all = 5980 entries                        │     │
-   │                                                         │     │
-   │  [is_mech] ◄── Bernoulli(σ(-α_rel - c_{k,t}))  ◄──────────────┘
-   │  1 = mech DNF, 0 = finished or driver-fault            (α_rel)
-   └─────────────────────────────────────────────────────────┘
+
 ```
 
 ### How to read this diagram
@@ -449,15 +442,13 @@ track career arcs while still sharing information across seasons.
 
 - **Observed covariates:** $w_r$ (is it raining?) and $\pi_{d,r}$ (normalised pit duration) are read from the data, not inferred. They act as switches — $w_r = 0$ (dry race) zeroes out both $\beta_w$ and $\delta_d$, making them irrelevant for that race.
 
-- **Bottom-right (reliability):** A completely separate observation equation. Every one of the 5980 entries (including mechanical DNFs excluded from the ranking) contributes a Bernoulli signal: did this constructor have a mechanical failure? This is how Model 3 uses DNF information that Models 1 and 2 throw away.
 
-- **No arrow from reliability back to ranking:** The Bernoulli term does not affect Plackett-Luce. $c_k$ is informed by *both* equations independently, which is the correct setup — constructor quality has two dimensions (pace and reliability) that both contribute to the posterior.
 
 ### What it answers
 
 **What additional structure exists beyond temporal dynamics?** After accounting
 for driver skill changing over time and constructor performance changing over
-time, what else matters? We add five things, each testing a distinct hypothesis.
+time, what else matters? We add four things, each testing a distinct hypothesis.
 
 ### What it adds (from Model 2)
 
@@ -497,19 +488,6 @@ time, what else matters? We add five things, each testing a distinct hypothesis.
    (early DNFs), and winsorisation at the 99th percentile to clamp extreme
    data artefacts (e.g., pit times of 61 minutes from timing system glitches).
 
-5. **Bernoulli reliability ($\alpha_{rel}$):** In Models 1 and 2, mechanical
-   DNFs were simply excluded. This is clean but throws away information — a
-   team whose car breaks down every other race is clearly worse than one that
-   finishes reliably. The Bernoulli term adds a separate observation: did this
-   constructor's car suffer a mechanical DNF in this race? Better constructors
-   (higher $c_k$) should fail less often. The parameter $\alpha_{rel}$ sets
-   the baseline failure rate for an average constructor.
-
-   For an average constructor ($c_k \approx 0$): $\sigma(-\alpha_{rel}) \approx 11\%$.
-   This is close to the empirical 7.7% rate. Higher $c_k$ lowers the failure
-   probability: a constructor at $c_k = +1.0$ has failure probability
-   $\sigma(-3.09) \approx 4.4\%$.
-
 ### The variables
 
 **Latent** (inferred by the model):
@@ -521,7 +499,6 @@ time, what else matters? We add five things, each testing a distinct hypothesis.
 | $\beta_w$ | 1 | $\mathcal{N}(0, 0.5^2)$ | Global wet-weather shift. Does rain change all performances by a constant amount? |
 | $\delta_d$ | 77 | $\mathcal{N}(0, 0.5^2)$ | Driver deviation from $\beta_w$. Positive = better than average in rain. Negative = worse than average in rain. |
 | $\beta_\pi$ | 1 | $\mathcal{N}(0, 0.5^2)$ | Effect of pit-stop time. A positive value means "longer pit stops correlate with better results" (which turned out to be an artefact — see results). |
-| $\alpha_{rel}$ | 1 | $\mathcal{N}(0, 1^2)$ | Baseline log-odds of mechanical DNF. Absorbs the overall failure rate so $c_k$ can adjust relative to the field. |
 
 **Observed** (read from the data, not inferred):
 
@@ -534,16 +511,9 @@ time, what else matters? We add five things, each testing a distinct hypothesis.
 
 $$p_{d,r} = \underbrace{s_{d,t(r)} + c_{k(d,r),t(r)}}_{\text{temporal (Model 2)}} + \underbrace{e_{circ(r)}}_{\text{circuit}} + \underbrace{\beta_w w_r}_{\text{global wet}} + \underbrace{\delta_d w_r}_{\text{driver wet}} + \underbrace{\beta_\pi \pi_{d,r}}_{\text{pit stop}}$$
 
-### The reliability equation (separate, over ALL rows)
-
-$$P(\text{mechanical DNF} \mid \text{constructor } k) = \sigma(-\alpha_{rel} - c_k)$$
-
-This is a separate "factor" in the model — it doesn't affect the Plackett-Luce
-ranking. It only feeds information about which constructors are reliable.
-
 ### How it's trained
 
-SVI only, 5000 steps. About 2 minutes. ~1455 latent dimensions.
+SVI only, 5000 steps. About 2 minutes. ~1454 latent dimensions.
 
 ### What we found (key results)
 
@@ -551,7 +521,6 @@ SVI only, 5000 steps. About 2 minutes. ~1455 latent dimensions.
 |---|---|---|
 | $\beta_w$ | −0.03 ± 0.51 | Centred at zero, spans the full prior range. **No global wet-weather effect.** Rain doesn't shift all performances equally — any wet-weather signal is driver-specific. |
 | $\beta_\pi$ | +0.02 ± 0.03 | Tightly estimated near zero. **Pit-stop duration has no detectable effect** on race outcomes. The previously reported +0.26 was a data artefact (early DNFs with zero pit time were systematically at the bottom, creating a spurious correlation). |
-| $\alpha_{rel}$ | +2.09 ± 0.07 | Baseline DNF probability ≈ 11% for average constructor. Better constructors fail mechanically less often. |
 | $\delta_d$ top 5 | Verstappen +0.62, Rosberg +0.52, Norris +0.44, Hülkenberg +0.42, Hamilton +0.33 | Top wet-weather drivers by model inference. Differs from historical "rain master" reputations (Alonso is 6th, Webber is negative). Only ~30 wet races exist — uncertainty is high. |
 
 ---
@@ -566,10 +535,9 @@ SVI only, 5000 steps. About 2 minutes. ~1455 latent dimensions.
 | Global wet weather ($\beta_w$) | ✗ | ✗ | ✓ |
 | Driver wet skill ($\delta_d$) | ✗ | ✗ | ✓ |
 | Pit-stop covariate ($\beta_\pi$) | ✗ | ✗ | ✓ |
-| Reliability ($\alpha_{rel}$) | ✗ | ✗ | ✓ |
 | Observed covariates | None | None | $w_r$, $\pi_{d,r}$ |
-| Mechanical DNF handling | Excluded | Excluded | Bernoulli term |
-| Number of latent variables | 93 | 1344 | 1455 |
+| Mechanical DNF handling | Excluded | Excluded | Excluded |
+| Number of latent variables | 93 | 1344 | 1454 |
 | Inference method | SVI + NUTS | SVI | SVI |
 | Training time | ~2 + 9 min | ~1 min | ~2 min |
 
@@ -583,9 +551,9 @@ These are hard rules — any code that violates them is wrong:
    approximations. The Plackett-Luce is the exact joint probability of the finishing order.
 2. **Sum-to-zero via reparameterisation.** Sample $K{-}1$ free constructor values, derive the
    $K$-th. The guide never samples $c$ directly. The constraint holds exactly.
-3. **Mechanical DNFs excluded from ranking in Models 1 & 2.** Including them creates an
-   asymmetric bias where good constructors are penalised more for failures. Model 3
-   handles them properly via a separate Bernoulli term.
+3. **Mechanical DNFs excluded from ranking.** Including them creates an
+   asymmetric bias where good constructors are penalised more for failures.
+   Mechanical DNFs are excluded from the Plackett-Luce ranking in all three models.
 4. **AR(1) via cumsum of innovations.** No recursive `pyro.sample` loop. Two vectorised
    sample sites per temporal variable (initial state + innovations), not $D \times T$.
 5. **NUTS on Model 1 only.** NUTS does not scale to the ~1344 latent dimensions of

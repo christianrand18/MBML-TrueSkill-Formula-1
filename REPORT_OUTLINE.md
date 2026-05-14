@@ -258,7 +258,7 @@ $$p_{d,r} = s_{d,t(r)} + c_{k(d,r),t(r)} + e_{circ(r)} + \beta_w w_r + \delta_d 
 - $\sigma_e = 0.5$, $\sigma_{\beta_w} = \sigma_{\beta_\pi} = \sigma_{\delta} = 0.3$
 - AR(1) innovation scales and initial skill priors as in Model 2
 
-**Motivation — the five additions:**
+**Motivation — the four additions:**
 
 1. **Circuit effects** $e_c \sim \mathcal{N}(0, \sigma_e)$: per-circuit latent effects absorb
    track-specific biases independent of car and driver. Circuits like Monaco or
